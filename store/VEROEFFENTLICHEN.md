@@ -7,7 +7,7 @@ nichtssagenden „Server error 400“).
 
 | Datei | Wofür |
 |---|---|
-| `FindMyAnything-1.2.pbw` | die Watchapp. Dieselbe Datei wie im [GitHub-Release v1.2](https://github.com/n0va-SIDEffects/pebble-findmyanything/releases/tag/v1.2) (sha256 beginnt mit `c78c2b80`) |
+| `FindMyAnything-1.2.pbw` | die Watchapp. Dieselbe Datei wie im [GitHub-Release v1.2](https://github.com/n0va-SIDEffects/pebble-findmyanything/releases/tag/v1.2) (sha256 beginnt mit `6c17275d`) |
 | `icon_80.png` | Store-Icon, 80 × 80, ohne Alphakanal (Pflichtfeld) |
 | `icon_144.png`, `icon_48.png` | grosses und kleines Icon, falls das Portal danach fragt |
 | `banner_720x320.png` | Marketing Banner der Asset Collection |
