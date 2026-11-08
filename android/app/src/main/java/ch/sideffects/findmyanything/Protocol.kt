@@ -38,6 +38,7 @@ object Protocol {
 
     const val KEY_STATUS = 30u
     const val KEY_STATUS_TEXT = 31u
+    const val KEY_SETTINGS = 40u
 
     const val TYPE_LIST = 1
     const val TYPE_SEARCH = 2
@@ -81,18 +82,11 @@ object Category {
     const val VEHICLE = 10
     const val HEALTH = 11
 
-    fun label(c: Int): String = when (c) {
-        TRACKER -> "Tracker"
-        PHONE -> "Handy/Tablet"
-        COMPUTER -> "Computer"
-        AUDIO -> "Audio"
-        WEARABLE -> "Wearable"
-        MEDIA -> "TV/Medien"
-        BEACON -> "Beacon"
-        SMARTHOME -> "Smart Home"
-        INPUT -> "Eingabe"
-        VEHICLE -> "Fahrzeug"
-        HEALTH -> "Gesundheit"
-        else -> "Gerät"
-    }
+    private val IDS = intArrayOf(
+        R.string.cat_0, R.string.cat_1, R.string.cat_2, R.string.cat_3, R.string.cat_4, R.string.cat_5,
+        R.string.cat_6, R.string.cat_7, R.string.cat_8, R.string.cat_9, R.string.cat_10, R.string.cat_11,
+    )
+
+    /** Category name in the chosen language. */
+    fun label(c: Int): String = Classifier.res?.getString(IDS[if (c in IDS.indices) c else 0]) ?: ""
 }

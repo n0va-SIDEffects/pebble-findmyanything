@@ -145,16 +145,20 @@ class DeviceStore {
         return t
     }
 
-    fun prune(now: Long, keepId: Int?) {
-        val dead = byId.values.filter { it.id != keepId && now - it.lastSeen > 180_000 }.map { it.id }.toSet()
+    fun prune(now: Long, keepId: Int?, keepMs: Long) {
+        val dead = byId.values.filter { it.id != keepId && now - it.lastSeen > keepMs }.map { it.id }.toSet()
         if (dead.isEmpty()) return
         dead.forEach { byId.remove(it) }
         byAddress.entries.removeAll { it.value.id in dead }
     }
 
-    /** Devices seen in the last minute: fresh ones first, each group by signal strength. */
-    fun snapshot(now: Long): List<Tracked> =
-        byId.values.filter { now - it.lastSeen <= 60_000 && !it.smooth.isNaN() }
+    /** Devices to show, after the user's filters: fresh ones first, each group by signal strength. */
+    fun snapshot(now: Long, s: AppSettings): List<Tracked> =
+        byId.values.filter {
+            now - it.lastSeen <= s.maxAgeSec * 1000L && !it.smooth.isNaN() &&
+                it.smooth >= s.minRssi &&
+                (!s.hideUnnamed || it.info.name != null || it.info.category == Category.TRACKER)
+        }
             .sortedWith(compareBy<Tracked> { now - it.lastSeen > 15_000 }.thenByDescending { it.smooth })
 
     fun clear() {

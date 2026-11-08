@@ -1,4 +1,5 @@
 #include "icons.h"
+#include "i18n.h"
 
 GColor category_color(uint8_t cat) {
   switch (cat) {
@@ -18,20 +19,7 @@ GColor category_color(uint8_t cat) {
 }
 
 const char *category_label(uint8_t cat) {
-  switch (cat) {
-    case CAT_TRACKER:   return "Tracker";
-    case CAT_PHONE:     return "Handy/Tablet";
-    case CAT_COMPUTER:  return "Computer";
-    case CAT_AUDIO:     return "Audio";
-    case CAT_WEARABLE:  return "Wearable";
-    case CAT_MEDIA:     return "TV/Medien";
-    case CAT_BEACON:    return "Beacon";
-    case CAT_SMARTHOME: return "Smart Home";
-    case CAT_INPUT:     return "Eingabe";
-    case CAT_VEHICLE:   return "Fahrzeug";
-    case CAT_HEALTH:    return "Gesundheit";
-    default:            return "Gerät";
-  }
+  return tr((StrId)(S_CAT_0 + (cat <= CAT_HEALTH ? cat : 0)));
 }
 
 static void fill(GContext *ctx, int x, int y, int w, int h, int radius) {

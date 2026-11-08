@@ -15,6 +15,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.Resources
 import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
@@ -120,14 +121,37 @@ object FinderEngine {
     private var bondedRefreshed = 0L
     private var receiversRegistered = false
 
+    private lateinit var res: Resources
+    private var settingsPending = true
+
     private val _ui = MutableStateFlow(UiState())
     val ui: StateFlow<UiState> = _ui
 
     fun init(context: Context) {
         if (::app.isInitialized) return
         app = context.applicationContext
+        SettingsStore.init(app)
+        updateLocale()
         handler.post { Assigned.load(app) }
     }
+
+    private fun updateLocale() {
+        res = SettingsStore.localized(app, SettingsStore.current).resources
+        Classifier.res = res
+    }
+
+    /** Called by SettingsStore after every change. */
+    fun settingsChanged() = handler.post {
+        if (!::app.isInitialized) return@post
+        updateLocale()
+        settingsPending = true
+        if (!SettingsStore.current.classic) {
+            try { if (adapter()?.isDiscovering == true) adapter()?.cancelDiscovery() } catch (_: SecurityException) {}
+        }
+    }
+
+    /** Localized resources for other components (notification). */
+    fun resources(): Resources = res
 
     // ---- Public API (any thread) ----
 
@@ -135,6 +159,7 @@ object FinderEngine {
         Log.i(TAG, "watchapp opened")
         watchActive = true
         lastWatchContact = now()
+        settingsPending = true
         updateActive()
     }
 
@@ -144,6 +169,7 @@ object FinderEngine {
         lastWatchContact = now()
         if (!watchActive) {
             watchActive = true
+            settingsPending = true
             updateActive()
         }
         when (cmd) {
@@ -234,14 +260,14 @@ object FinderEngine {
         var text: String? = null
         val ad = adapter()
         if (!hasScanPermission()) {
-            s = s or Protocol.ST_NO_PERMISSION; text = "Rechte fehlen: Handy-App öffnen"
+            s = s or Protocol.ST_NO_PERMISSION; text = res.getString(R.string.st_no_perm)
         }
         if (ad == null || !ad.isEnabled) {
-            s = s or Protocol.ST_BT_OFF; text = "Bluetooth am Handy ist aus"
+            s = s or Protocol.ST_BT_OFF; text = res.getString(R.string.st_bt_off)
         }
         val lm = app.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         if (Build.VERSION.SDK_INT >= 28 && lm != null && !lm.isLocationEnabled) {
-            s = s or Protocol.ST_LOCATION_OFF; if (text == null) text = "Standort am Handy ist aus"
+            s = s or Protocol.ST_LOCATION_OFF; if (text == null) text = res.getString(R.string.st_loc_off)
         }
         if (Build.VERSION.SDK_INT >= 29 && !granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
             s = s or Protocol.ST_NO_BG_LOCATION
@@ -338,7 +364,7 @@ object FinderEngine {
             startFiltered()
         } catch (e: Exception) {
             Log.w(TAG, "startScan failed", e)
-            scanError = "Scan-Fehler: ${e.javaClass.simpleName}"
+            scanError = res.getString(R.string.st_scan_error, e.javaClass.simpleName)
         }
     }
 
@@ -412,9 +438,9 @@ object FinderEngine {
         }
         if (cb === cbAll) cbAll = null
         scanError = when (code) {
-            ScanCallback.SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "Scan blockiert: Bluetooth neu starten"
-            ScanCallback.SCAN_FAILED_FEATURE_UNSUPPORTED -> "Scan nicht unterstützt"
-            else -> "Scan-Fehler $code"
+            ScanCallback.SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> res.getString(R.string.st_scan_blocked)
+            ScanCallback.SCAN_FAILED_FEATURE_UNSUPPORTED -> res.getString(R.string.st_scan_unsupported)
+            else -> res.getString(R.string.st_scan_error, code.toString())
         }
     }
 
@@ -461,11 +487,12 @@ object FinderEngine {
             }
             manageClassic(ad, n)
         }
-        store.prune(n, targetId)
+        store.prune(n, targetId, maxOf(180_000L, SettingsStore.current.maxAgeSec * 2000L))
     }
 
     private fun manageClassic(ad: BluetoothAdapter, n: Long) {
         try {
+            if (!SettingsStore.current.classic) return
             val target = targetId?.let { store.byId[it] }
             when (mode) {
                 Mode.LIST -> if (!ad.isDiscovering && n - lastDiscoveryStart > 45_000) {
@@ -541,12 +568,18 @@ object FinderEngine {
     /** Sends one message; returns false if the watchapp is gone. */
     private suspend fun send(dict: PebbleDictionary): Boolean {
         val s = sender ?: return false
+        // Settings ride along with the next message until the watch has them
+        val withSettings = settingsPending
+        val out = if (withSettings) {
+            LinkedHashMap(dict).also { it[Protocol.KEY_SETTINGS] = PebbleDictionaryItem.Bytes(SettingsStore.current.watchBlob()) }
+        } else dict
         val res = try {
-            s.sendDataToPebble(Protocol.WATCHAPP_UUID, dict)
+            s.sendDataToPebble(Protocol.WATCHAPP_UUID, out)
         } catch (e: Exception) {
             Log.w(TAG, "send failed", e); null
         }
         if (res == null) return true // Pebble app not reachable right now, try again later
+        if (withSettings && res.values.all { it == TransmissionResult.Success }) settingsPending = false
         if (res.values.any { it == TransmissionResult.FailedDifferentAppOpen }) {
             closeWatch("different app open")
             return false
@@ -598,7 +631,7 @@ object FinderEngine {
 
     private suspend fun sendList(seq: Int) {
         val n = now()
-        val all = store.snapshot(n)
+        val all = store.snapshot(n, SettingsStore.current)
         val entries = all.take(Protocol.MAX_LIST).map { packEntry(it, n) }
         val parts = ArrayList<ByteArray>()
         var cur = ByteArrayOutputStream()
@@ -636,7 +669,7 @@ object FinderEngine {
         if (t == null || t.smooth.isNaN()) {
             d[Protocol.KEY_AGE] = i32(9999)
             d[Protocol.KEY_RSSI] = i32(-127)
-            d[Protocol.KEY_NAME] = PebbleDictionaryItem.Text("Gerät verloren")
+            d[Protocol.KEY_NAME] = PebbleDictionaryItem.Text(res.getString(R.string.lost_device))
             send(d)
             return
         }
@@ -661,7 +694,7 @@ object FinderEngine {
         while (scope.isActive && uiActive) {
             val n = now()
             val (st, text) = computeStatus()
-            val rows = store.snapshot(n).map {
+            val rows = store.snapshot(n, SettingsStore.current).map {
                 DeviceRow(
                     id = it.id, name = it.displayName, detail = it.displayDetail, category = it.info.category,
                     rssi = it.smooth.roundToInt(), ageSec = ((n - it.lastSeen) / 1000).toInt(),

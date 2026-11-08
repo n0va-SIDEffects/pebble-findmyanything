@@ -1,7 +1,11 @@
 // Find My Anything: finds Bluetooth devices by signal strength.
 // The phone (Android companion app) scans; the watch shows the list and guides the search.
+// Settings come from the phone app (no PebbleKit JS: it would take the messages away
+// from the companion app) and are kept in flash.
 #include <pebble.h>
 #include "icons.h"
+#include "i18n.h"
+#include "sounds.h"
 
 // 1 = fake data for emulator screenshots, no phone needed
 #ifndef FMA_DEMO
@@ -10,21 +14,34 @@
 
 // ---- Protocol (docs/protokoll.md, Android: Protocol.kt) ----
 enum { CMD_LIST = 1, CMD_SEARCH = 2, CMD_STOP = 3 };
-enum { TYPE_LIST = 1, TYPE_SEARCH = 2, TYPE_STATUS = 3 };
+enum { TYPE_LIST = 1, TYPE_SEARCH = 2 };
 #define ST_BT_OFF         (1 << 0)
 #define ST_NO_PERMISSION  (1 << 1)
 #define ST_SCREEN_OFF     (1 << 2)
 #define ST_CLASSIC_ACTIVE (1 << 3)
 #define ST_LOCATION_OFF   (1 << 4)
-#define ST_NO_BG_LOCATION (1 << 5)
 #define ST_SCAN_ERROR     (1 << 6)
-#define FL_CLASSIC    (1 << 0)
 #define FL_BONDED     (1 << 2)
 
 #define MAX_DEVICES 40
 #define TEXT_LEN 25
-#define PERSIST_FEEDBACK 1
 #define KEEPALIVE_MS 60000
+#define IDLE_BEFORE_SORT_MS 5000   // no reordering right after a button press or touch
+#define SORT_HYSTERESIS 6          // dB a device must be stronger to move up
+#define HEADER_H 24
+#define ROW_H 46
+
+// ---- Settings (sent by the phone, 11 bytes, version 1) ----
+enum { SORT_SIGNAL, SORT_NAME, SORT_NEWEST };
+enum { SOUND_STYLE_BEEP, SOUND_STYLE_CLICK };
+enum { LIGHT_AUTO, LIGHT_SEARCH, LIGHT_ALWAYS };
+enum { BIG_PERCENT, BIG_DBM };
+typedef struct {
+  uint8_t version, sort, resort_sec, start_filter, feedback, volume, sound, light, big_number, lang, vibe;
+} Settings;
+#define SETTINGS_VERSION 1
+#define PERSIST_SETTINGS 2
+static Settings s_cfg = {SETTINGS_VERSION, SORT_SIGNAL, 10, 0, 1, 30, SOUND_STYLE_BEEP, LIGHT_AUTO, BIG_PERCENT, LANG_EN, 0};
 
 typedef struct {
   uint32_t id;
@@ -55,23 +72,24 @@ static Device s_live[MAX_DEVICES];
 static int s_live_count;
 static Device s_build[MAX_DEVICES];
 static int s_build_count, s_build_seq = -1, s_build_next;
-static uint8_t s_view[MAX_DEVICES];
+static uint32_t s_order[MAX_DEVICES];  // display order (ids), kept stable between snapshots
+static int s_order_count;
+static uint8_t s_view[MAX_DEVICES];    // live indices after filter, in display order
 static int s_view_count, s_total;
+static int64_t s_last_interaction, s_last_sort;
+static bool s_programmatic;
 static int32_t s_status;
-static char s_status_text[48];
+static char s_status_text[64];
 static bool s_got_data;
 static int64_t s_start_ms;
-
 static int s_filter;
-static const char *const FILTER_NAMES[] = {"Alle", "Tracker", "Audio", "Handy & PC", "Wearables", "Sonstige"};
 #define FILTER_COUNT 6
 
 static Search s_search;
 static bool s_in_search;
-static int s_feedback = 1;  // bit0 = tone, bit1 = vibration
-static const char *const FEEDBACK_NAMES[] = {"Signal: stumm", "Signal: Ton", "Signal: Vibration", "Signal: Ton + Vibration"};
-static bool s_light_on;
-static char s_toast[40];
+static int s_feedback = 1;  // bit0 = sound, bit1 = vibration
+static bool s_light_forced;
+static char s_toast[48];
 static int64_t s_toast_until;
 
 static int s_current_cmd = CMD_LIST;
@@ -95,27 +113,32 @@ static int64_t now_ms(void) {
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+static int iabs(int v) { return v < 0 ? -v : v; }
 
 // 0..100 from -100..-40 dBm
 static int signal_pct(int rssi) { return clampi((rssi + 100) * 100 / 60, 0, 100); }
 
+// Traffic light: green = right next to it, red = far away
 static GColor heat_color(int rssi) {
-  if (rssi >= -50) return GColorFromHEX(0xFF0000);
-  if (rssi >= -60) return GColorFromHEX(0xFF5500);
-  if (rssi >= -70) return GColorFromHEX(0xFFAA00);
-  if (rssi >= -80) return GColorFromHEX(0xAAFF55);
-  if (rssi >= -90) return GColorFromHEX(0x00AAFF);
-  return GColorFromHEX(0x5555FF);
+  if (rssi >= -50) return GColorFromHEX(0x00FF00);
+  if (rssi >= -60) return GColorFromHEX(0xAAFF00);
+  if (rssi >= -70) return GColorFromHEX(0xFFFF00);
+  if (rssi >= -80) return GColorFromHEX(0xFFAA00);
+  if (rssi >= -90) return GColorFromHEX(0xFF5500);
+  return GColorFromHEX(0xFF0000);
 }
 
 static const char *proximity(int rssi) {
-  if (rssi >= -50) return "direkt daneben";
-  if (rssi >= -60) return "sehr nah";
-  if (rssi >= -70) return "nah";
-  if (rssi >= -80) return "mittel";
-  if (rssi >= -90) return "weit";
-  return "sehr weit";
+  if (rssi >= -50) return tr(S_PX_0);
+  if (rssi >= -60) return tr(S_PX_1);
+  if (rssi >= -70) return tr(S_PX_2);
+  if (rssi >= -80) return tr(S_PX_3);
+  if (rssi >= -90) return tr(S_PX_4);
+  return tr(S_PX_5);
 }
+
+static const char *filter_name(int f) { return tr((StrId)(S_F_ALL + clampi(f, 0, FILTER_COUNT - 1))); }
+static const char *feedback_name(int f) { return tr((StrId)(S_FB_OFF + (f & 3))); }
 
 static int bars_for(int rssi) {
   if (rssi >= -55) return 4;
@@ -135,6 +158,14 @@ static void toast(const char *text) {
   snprintf(s_toast, sizeof(s_toast), "%s", text);
   s_toast_until = now_ms() + 1800;
   if (s_search_layer) layer_mark_dirty(s_search_layer);
+}
+
+static void mark_interaction(void) { s_last_interaction = now_ms(); }
+
+// ---- Light ----
+static void apply_light(void) {
+  bool on = s_light_forced || s_cfg.light == LIGHT_ALWAYS || (s_cfg.light == LIGHT_SEARCH && s_in_search);
+  light_enable(on);  // false hands the backlight back to the system
 }
 
 // ---- Outbox: one message at a time, latest command wins ----
@@ -208,10 +239,62 @@ static bool filter_match(uint8_t cat) {
   }
 }
 
+static int live_index(uint32_t id) {
+  for (int i = 0; i < s_live_count; i++) {
+    if (s_live[i].id == id) return i;
+  }
+  return -1;
+}
+
+static int ci_cmp(const char *a, const char *b) {
+  for (;; a++, b++) {
+    int ca = (unsigned char)*a, cb = (unsigned char)*b;
+    if (ca >= 'A' && ca <= 'Z') ca += 32;
+    if (cb >= 'A' && cb <= 'Z') cb += 32;
+    if (ca != cb || !ca) return ca - cb;
+  }
+}
+
+// Should a be listed before b?
+static bool before(const Device *a, const Device *b, bool hysteresis) {
+  switch (s_cfg.sort) {
+    case SORT_NAME: return ci_cmp(a->name, b->name) < 0;
+    case SORT_NEWEST: return a->id > b->id;  // the phone numbers devices in the order it finds them
+    default: {
+      bool sa = a->age > 15, sb = b->age > 15;  // devices out of reach sink to the bottom
+      if (sa != sb) return !sa;
+      return a->rssi > b->rssi + (hysteresis ? SORT_HYSTERESIS : 0);
+    }
+  }
+}
+
+// Insertion sort of the display order. With hysteresis a device only moves up
+// when it is clearly stronger, so the list stays calm.
+static void sort_order(bool hysteresis) {
+  int idx[MAX_DEVICES];
+  int n = 0;
+  for (int i = 0; i < s_order_count; i++) {
+    int li = live_index(s_order[i]);
+    if (li >= 0) idx[n++] = li;
+  }
+  for (int i = 1; i < n; i++) {
+    int cur = idx[i], j = i;
+    while (j > 0 && before(&s_live[cur], &s_live[idx[j - 1]], hysteresis)) {
+      idx[j] = idx[j - 1];
+      j--;
+    }
+    idx[j] = cur;
+  }
+  for (int i = 0; i < n; i++) s_order[i] = s_live[idx[i]].id;
+  s_order_count = n;
+  s_last_sort = now_ms();
+}
+
 static void rebuild_view(void) {
   s_view_count = 0;
-  for (int i = 0; i < s_live_count; i++) {
-    if (filter_match(s_live[i].cat)) s_view[s_view_count++] = (uint8_t)i;
+  for (int i = 0; i < s_order_count; i++) {
+    int li = live_index(s_order[i]);
+    if (li >= 0 && filter_match(s_live[li].cat)) s_view[s_view_count++] = (uint8_t)li;
   }
 }
 
@@ -224,6 +307,7 @@ static uint32_t selected_id(void) {
 
 static void refresh_list(uint32_t keep_id) {
   if (!s_menu) return;
+  s_programmatic = true;
   menu_layer_reload_data(s_menu);
   if (keep_id) {
     for (int r = 0; r < s_view_count; r++) {
@@ -233,8 +317,16 @@ static void refresh_list(uint32_t keep_id) {
       }
     }
   }
+  s_programmatic = false;
   layer_set_hidden(s_empty_layer, s_view_count > 0);
   layer_mark_dirty(s_empty_layer);
+}
+
+static void resort_now(void) {
+  uint32_t keep = selected_id();
+  sort_order(false);
+  rebuild_view();
+  refresh_list(keep);
 }
 
 static void parse_entries(const uint8_t *p, uint16_t len) {
@@ -271,9 +363,34 @@ static int32_t get_int(DictionaryIterator *it, uint32_t key, int32_t def) {
 
 static void commit_list(int total) {
   uint32_t keep = selected_id();
+  bool first = s_order_count == 0;
   memcpy(s_live, s_build, sizeof(Device) * s_build_count);
   s_live_count = s_build_count;
   s_total = total;
+
+  // Keep the order of devices already shown; new ones go to the end
+  uint32_t order[MAX_DEVICES];
+  int n = 0;
+  for (int i = 0; i < s_order_count; i++) {
+    if (live_index(s_order[i]) >= 0) order[n++] = s_order[i];
+  }
+  for (int i = 0; i < s_live_count && n < MAX_DEVICES; i++) {
+    bool known = false;
+    for (int k = 0; k < n; k++) {
+      if (order[k] == s_live[i].id) { known = true; break; }
+    }
+    if (!known) order[n++] = s_live[i].id;
+  }
+  memcpy(s_order, order, sizeof(uint32_t) * n);
+  s_order_count = n;
+
+  int64_t now = now_ms();
+  bool idle = now - s_last_interaction >= IDLE_BEFORE_SORT_MS;
+  int every = s_cfg.resort_sec ? s_cfg.resort_sec : 10;
+  if (first) sort_order(false);
+  else if (idle && s_cfg.sort != SORT_SIGNAL) sort_order(false);
+  else if (idle && now - s_last_sort >= every * 1000) sort_order(true);
+
   rebuild_view();
   refresh_list(keep);
 }
@@ -306,9 +423,8 @@ static void handle_search(DictionaryIterator *it) {
   s_search.dist = get_int(it, MESSAGE_KEY_Dist, -1);
   s_search.trend10 = get_int(it, MESSAGE_KEY_Trend, 0);
   s_search.rate10 = get_int(it, MESSAGE_KEY_Rate, 0);
-  Tuple *t = dict_find(it, MESSAGE_KEY_Category);
-  if (t) s_search.cat = (uint8_t)get_int(it, MESSAGE_KEY_Category, 0);
-  t = dict_find(it, MESSAGE_KEY_Name);
+  if (dict_find(it, MESSAGE_KEY_Category)) s_search.cat = (uint8_t)get_int(it, MESSAGE_KEY_Category, 0);
+  Tuple *t = dict_find(it, MESSAGE_KEY_Name);
   if (t && t->length > 1) snprintf(s_search.name, sizeof(s_search.name), "%s", t->value->cstring);
   t = dict_find(it, MESSAGE_KEY_Detail);
   if (t) snprintf(s_search.detail, sizeof(s_search.detail), "%s", t->value->cstring);
@@ -317,10 +433,40 @@ static void handle_search(DictionaryIterator *it) {
   layer_mark_dirty(s_search_layer);
 }
 
+// Settings blob from the phone
+static void apply_settings(const uint8_t *p, uint16_t len, bool from_phone) {
+  if (len < sizeof(Settings) || p[0] != SETTINGS_VERSION) return;
+  Settings n;
+  memcpy(&n, p, sizeof(Settings));
+  n.sort = clampi(n.sort, 0, 2);
+  n.start_filter = clampi(n.start_filter, 0, FILTER_COUNT - 1);
+  n.feedback &= 3;
+  n.volume = clampi(n.volume, 0, 100);
+  n.sound = clampi(n.sound, 0, 1);
+  n.light = clampi(n.light, 0, 2);
+  n.big_number = clampi(n.big_number, 0, 1);
+  n.lang = clampi(n.lang, 0, LANG_COUNT - 1);
+  bool changed = memcmp(&n, &s_cfg, sizeof(Settings)) != 0;
+  Settings old = s_cfg;
+  s_cfg = n;
+  i18n_set_lang(s_cfg.lang);
+  if (!changed) return;
+  if (from_phone) persist_write_data(PERSIST_SETTINGS, &s_cfg, sizeof(s_cfg));
+  if (old.start_filter != n.start_filter) s_filter = n.start_filter;
+  if (old.feedback != n.feedback) s_feedback = n.feedback;
+  if (old.sort != n.sort && s_order_count) sort_order(false);
+  rebuild_view();
+  refresh_list(selected_id());
+  apply_light();
+  if (s_menu) layer_mark_dirty(menu_layer_get_layer(s_menu));
+  if (s_search_layer) layer_mark_dirty(s_search_layer);
+}
+
 static void inbox_received(DictionaryIterator *it, void *ctx) {
   s_got_data = true;
-  Tuple *st = dict_find(it, MESSAGE_KEY_Status);
-  if (st) s_status = get_int(it, MESSAGE_KEY_Status, 0);
+  Tuple *cfg = dict_find(it, MESSAGE_KEY_Settings);
+  if (cfg) apply_settings(cfg->value->data, cfg->length, true);
+  if (dict_find(it, MESSAGE_KEY_Status)) s_status = get_int(it, MESSAGE_KEY_Status, 0);
   Tuple *stt = dict_find(it, MESSAGE_KEY_StatusText);
   if (stt) snprintf(s_status_text, sizeof(s_status_text), "%s", stt->value->cstring);
   switch (get_int(it, MESSAGE_KEY_Type, 0)) {
@@ -337,8 +483,8 @@ static void inbox_dropped(AppMessageResult reason, void *ctx) {
 
 // ---- List window ----
 static uint16_t menu_rows(MenuLayer *ml, uint16_t section, void *ctx) { return s_view_count; }
-static int16_t menu_row_height(MenuLayer *ml, MenuIndex *idx, void *ctx) { return 46; }
-static int16_t menu_header_height(MenuLayer *ml, uint16_t section, void *ctx) { return 24; }
+static int16_t menu_row_height(MenuLayer *ml, MenuIndex *idx, void *ctx) { return ROW_H; }
+static int16_t menu_header_height(MenuLayer *ml, uint16_t section, void *ctx) { return HEADER_H; }
 
 static void draw_phone_badge(GContext *ctx, GRect r) {
   GColor c = GColorFromHEX(0x55FF55);
@@ -351,13 +497,17 @@ static void draw_phone_badge(GContext *ctx, GRect r) {
   graphics_fill_rect(ctx, GRect(r.origin.x + 2, r.origin.y + 2, r.size.w - 4, r.size.h - 6), 0, GCornerNone);
 }
 
-static void menu_draw_header(GContext *ctx, const Layer *cell, uint16_t section, void *ctx2) {
+static void menu_draw_header(GContext *ctx, const Layer *cell, uint16_t section, void *data) {
   GRect b = layer_get_bounds(cell);
   graphics_context_set_fill_color(ctx, GColorFromHEX(0x000055));
   graphics_fill_rect(ctx, b, 0, GCornerNone);
   char buf[48];
-  if (s_filter == 0) snprintf(buf, sizeof(buf), "%d Geräte", s_total);
-  else snprintf(buf, sizeof(buf), "%d/%d · %s", s_view_count, s_total, FILTER_NAMES[s_filter]);
+  if (s_filter == 0) {
+    if (s_total == 1) snprintf(buf, sizeof(buf), "%s", tr(S_DEVICE_ONE));
+    else snprintf(buf, sizeof(buf), tr(S_DEVICES), s_total);
+  } else {
+    snprintf(buf, sizeof(buf), "%d/%d · %s", s_view_count, s_total, filter_name(s_filter));
+  }
   graphics_context_set_text_color(ctx, GColorWhite);
   graphics_draw_text(ctx, buf, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD), GRect(8, -1, b.size.w - 36, 22),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
@@ -393,9 +543,9 @@ static void menu_draw_row(GContext *ctx, const Layer *cell, MenuIndex *idx, void
   graphics_draw_text(ctx, d->name, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
                      GRect(32, 1, b.size.w - 32 - right, 22), GTextOverflowModeTrailingEllipsis,
                      GTextAlignmentLeft, NULL);
-  char det[40];
-  if (stale) snprintf(det, sizeof(det), "vor %d s · %s", d->age, d->detail);
-  else if (d->flags & FL_BONDED) snprintf(det, sizeof(det), "gekoppelt · %s", d->detail);
+  char det[48];
+  if (stale) snprintf(det, sizeof(det), tr(S_AGO), d->age, d->detail);
+  else if (d->flags & FL_BONDED) snprintf(det, sizeof(det), tr(S_BONDED), d->detail);
   else snprintf(det, sizeof(det), "%s", d->detail);
   graphics_context_set_text_color(ctx, hl ? GColorFromHEX(0xAAFFFF) : GColorFromHEX(0xAAAAAA));
   graphics_draw_text(ctx, det, fonts_get_system_font(FONT_KEY_GOTHIC_14),
@@ -403,7 +553,7 @@ static void menu_draw_row(GContext *ctx, const Layer *cell, MenuIndex *idx, void
                      GTextAlignmentLeft, NULL);
 
   draw_bars(ctx, b.size.w - 26, 6, d->rssi, stale);
-  char num[8];
+  char num[12];
   snprintf(num, sizeof(num), "%d", d->rssi);
   graphics_context_set_text_color(ctx, stale ? GColorFromHEX(0xAAAAAA) : GColorWhite);
   graphics_draw_text(ctx, num, fonts_get_system_font(FONT_KEY_GOTHIC_14), GRect(b.size.w - 46, 22, 42, 18),
@@ -416,13 +566,24 @@ static void menu_select(MenuLayer *ml, MenuIndex *idx, void *ctx) {
   if (idx->row < s_view_count) open_search(&s_live[s_view[idx->row]]);
 }
 
-static void menu_select_long(MenuLayer *ml, MenuIndex *idx, void *ctx) {
+static void next_filter(void) {
   uint32_t keep = selected_id();
   s_filter = (s_filter + 1) % FILTER_COUNT;
   rebuild_view();
   refresh_list(keep);
-  if (s_view_count > 0 && !keep) menu_layer_set_selected_index(s_menu, (MenuIndex){0, 0}, MenuRowAlignTop, false);
+  if (s_view_count > 0 && !keep) {
+    s_programmatic = true;
+    menu_layer_set_selected_index(s_menu, (MenuIndex){0, 0}, MenuRowAlignTop, false);
+    s_programmatic = false;
+  }
+  layer_mark_dirty(menu_layer_get_layer(s_menu));
   vibes_short_pulse();
+}
+
+static void menu_select_long(MenuLayer *ml, MenuIndex *idx, void *ctx) { next_filter(); }
+
+static void menu_selection_changed(MenuLayer *ml, MenuIndex new_index, MenuIndex old_index, void *ctx) {
+  if (!s_programmatic) mark_interaction();
 }
 
 static void draw_multiline(GContext *ctx, const char *text, GRect r, const char *font, GColor color) {
@@ -435,7 +596,6 @@ static void empty_update(Layer *layer, GContext *ctx) {
   GRect b = layer_get_bounds(layer);
   graphics_context_set_fill_color(ctx, GColorBlack);
   graphics_fill_rect(ctx, b, 0, GCornerNone);
-  // radar symbol
   GPoint c = GPoint(b.size.w / 2, 62);
   graphics_context_set_stroke_color(ctx, GColorFromHEX(0xFFAA00));
   graphics_context_set_fill_color(ctx, GColorFromHEX(0xFFAA00));
@@ -446,24 +606,24 @@ static void empty_update(Layer *layer, GContext *ctx) {
                       DEG_TO_TRIGANGLE(-45), DEG_TO_TRIGANGLE(45));
   }
   const char *title, *text;
-  char buf[96];
+  char buf[112];
   int64_t waited = now_ms() - s_start_ms;
   if (!s_got_data && waited < 8000) {
-    title = "Suche startet …";
-    text = "Die Handy-App wird geweckt";
+    title = tr(S_STARTING);
+    text = tr(S_WAKING);
   } else if (!s_got_data) {
-    title = "Keine Antwort vom Handy";
-    text = "Ist die Find-My-Anything-App auf dem Handy installiert und eingerichtet?";
+    title = tr(S_NO_PHONE);
+    text = tr(S_NO_PHONE_HINT);
   } else if (s_status_text[0]) {
-    title = "Handy meldet:";
+    title = tr(S_PHONE_SAYS);
     text = s_status_text;
   } else if (s_live_count > 0) {
-    title = "Nichts in diesem Filter";
-    snprintf(buf, sizeof(buf), "Filter «%s». Lang auf Select drücken für den nächsten Filter.", FILTER_NAMES[s_filter]);
+    title = tr(S_EMPTY_FILTER);
+    snprintf(buf, sizeof(buf), tr(S_EMPTY_FILTER_HINT), filter_name(s_filter));
     text = buf;
   } else {
-    title = "Noch nichts gefunden";
-    text = "Die Suche läuft weiter …";
+    title = tr(S_NOTHING);
+    text = tr(S_KEEP_SEARCHING);
   }
   draw_multiline(ctx, title, GRect(8, 112, b.size.w - 16, 30), FONT_KEY_GOTHIC_24_BOLD, GColorWhite);
   draw_multiline(ctx, text, GRect(12, 142, b.size.w - 24, 80), FONT_KEY_GOTHIC_18, GColorFromHEX(0xAAAAAA));
@@ -481,13 +641,14 @@ static void list_load(Window *w) {
     .draw_row = menu_draw_row,
     .select_click = menu_select,
     .select_long_click = menu_select_long,
+    .selection_changed = menu_selection_changed,
   });
   menu_layer_set_normal_colors(s_menu, GColorBlack, GColorWhite);
   menu_layer_set_highlight_colors(s_menu, GColorFromHEX(0x0055AA), GColorWhite);
   menu_layer_set_click_config_onto_window(s_menu, w);
   layer_add_child(root, menu_layer_get_layer(s_menu));
 
-  s_empty_layer = layer_create(GRect(0, 24, b.size.w, b.size.h - 24));
+  s_empty_layer = layer_create(GRect(0, HEADER_H, b.size.w, b.size.h - HEADER_H));
   layer_set_update_proc(s_empty_layer, empty_update);
   layer_add_child(root, s_empty_layer);
   layer_set_hidden(s_empty_layer, s_view_count > 0);
@@ -522,7 +683,7 @@ static void border_band(GContext *ctx, GRect b, int th, int permille, GColor col
   graphics_fill_rect(ctx, GRect(x0, y0, s, th), 0, GCornerNone);
 }
 
-// Small marker across the band at a position (peak value)
+// Small marker across the band at a position (best value)
 static void border_marker(GContext *ctx, GRect b, int th, int permille, GColor color) {
   int w = b.size.w, h = b.size.h, x0 = b.origin.x, y0 = b.origin.y;
   int pos = (2 * w + 2 * h) * clampi(permille, 0, 1000) / 1000;
@@ -540,16 +701,36 @@ static void draw_trend(GContext *ctx, GPoint c, int trend10) {
   if (trend10 > 10) {
     GPathInfo info = {3, (GPoint[]){{c.x - 9, c.y + 6}, {c.x + 9, c.y + 6}, {c.x, c.y - 8}}};
     GPath *p = gpath_create(&info);
-    graphics_context_set_fill_color(ctx, GColorFromHEX(0xFF5500));
+    graphics_context_set_fill_color(ctx, GColorFromHEX(0x00FF00));
     gpath_draw_filled(ctx, p);
     gpath_destroy(p);
   } else if (trend10 < -10) {
     GPathInfo info = {3, (GPoint[]){{c.x - 9, c.y - 6}, {c.x + 9, c.y - 6}, {c.x, c.y + 8}}};
     GPath *p = gpath_create(&info);
-    graphics_context_set_fill_color(ctx, GColorFromHEX(0x00AAFF));
+    graphics_context_set_fill_color(ctx, GColorFromHEX(0xFF0000));
     gpath_draw_filled(ctx, p);
     gpath_destroy(p);
   }
+}
+
+// Big value: 0..100 or dBm. LECO has no minus glyph, so the minus is drawn.
+static void draw_big_value(GContext *ctx, GRect b, bool lost, GColor color) {
+  GFont font = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
+  char num[12];
+  bool dbm = s_cfg.big_number == BIG_DBM;
+  if (lost) snprintf(num, sizeof(num), "--");
+  else snprintf(num, sizeof(num), "%d", dbm ? iabs(s_search.rssi) : signal_pct(s_search.rssi));
+  GRect box = GRect(0, 56, b.size.w, 50);
+  GSize sz = graphics_text_layout_get_content_size(num, font, box, GTextOverflowModeFill, GTextAlignmentLeft);
+  int minus_w = (dbm && !lost) ? 16 : 0;
+  int x = (b.size.w - sz.w - minus_w - (minus_w ? 4 : 0)) / 2;
+  graphics_context_set_text_color(ctx, color);
+  if (minus_w) {
+    graphics_context_set_fill_color(ctx, color);
+    graphics_fill_rect(ctx, GRect(x, 56 + 24, minus_w, 5), 0, GCornerNone);
+    x += minus_w + 4;
+  }
+  graphics_draw_text(ctx, num, font, GRect(x, 56, sz.w + 4, 50), GTextOverflowModeFill, GTextAlignmentLeft, NULL);
 }
 
 static void search_update(Layer *layer, GContext *ctx) {
@@ -578,67 +759,89 @@ static void search_update(Layer *layer, GContext *ctx) {
                      GRect(42, 30, b.size.w - 42 - 14, 18), GTextOverflowModeTrailingEllipsis,
                      GTextAlignmentLeft, NULL);
 
-  // Big signal value 0..100
-  char num[8];
-  if (lost) snprintf(num, sizeof(num), "--");
-  else snprintf(num, sizeof(num), "%d", signal_pct(s_search.rssi));
-  graphics_context_set_text_color(ctx, lost ? GColorFromHEX(0xAAAAAA) : heat);
-  graphics_draw_text(ctx, num, fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS), GRect(20, 56, b.size.w - 40, 50),
-                     GTextOverflowModeFill, GTextAlignmentCenter, NULL);
-  if (!lost) {
-    draw_trend(ctx, GPoint(b.size.w - 34, 84), s_search.trend10);
-  }
+  draw_big_value(ctx, b, lost, lost ? GColorFromHEX(0xAAAAAA) : heat);
+  if (!lost) draw_trend(ctx, GPoint(b.size.w - 30, 84), s_search.trend10);
 
   char line[48];
   const char *word;
-  if (no_phone && s_search.last_msg) word = "Handy antwortet nicht";
-  else if (!s_search.last_msg) word = "warte auf Handy …";
-  else if (!s_search.have) word = "nicht gefunden";
+  if (no_phone && s_search.last_msg) word = tr(S_PHONE_SILENT);
+  else if (!s_search.last_msg) word = tr(S_WAIT_PHONE);
+  else if (!s_search.have) word = tr(S_NOT_FOUND);
   else if (lost) {
-    snprintf(line, sizeof(line), "kein Signal seit %d s", s_search.age10 / 10);
+    snprintf(line, sizeof(line), tr(S_NO_SIGNAL_FOR), s_search.age10 / 10);
     word = line;
   } else word = proximity(s_search.rssi);
   graphics_context_set_text_color(ctx, lost ? GColorFromHEX(0xAAAAAA) : heat);
   graphics_draw_text(ctx, word, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD), GRect(14, 108, b.size.w - 28, 30),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 
-  // Details
-  char info[64];
+  // Details: the other unit, best value, distance, rate
+  char info[64], best[32];
+  info[0] = '\0';
   if (s_search.have) {
-    if (s_search.peak > -127) snprintf(info, sizeof(info), "%d dBm · Bestwert %d", s_search.rssi, signal_pct(s_search.peak));
-    else snprintf(info, sizeof(info), "%d dBm", s_search.rssi);
-  } else {
-    info[0] = '\0';
+    bool dbm = s_cfg.big_number == BIG_DBM;
+    if (s_search.peak > -127) snprintf(best, sizeof(best), tr(S_BEST), dbm ? s_search.peak : signal_pct(s_search.peak));
+    else best[0] = '\0';
+    if (dbm) snprintf(info, sizeof(info), "%d %%%s%s", signal_pct(s_search.rssi), best[0] ? " · " : "", best);
+    else snprintf(info, sizeof(info), "%d dBm%s%s", s_search.rssi, best[0] ? " · " : "", best);
   }
   graphics_context_set_text_color(ctx, GColorWhite);
   graphics_draw_text(ctx, info, fonts_get_system_font(FONT_KEY_GOTHIC_18), GRect(14, 140, b.size.w - 28, 22),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 
-  char info2[64];
+  char info2[72], rate[32];
   info2[0] = '\0';
   if (s_search.have && s_search.dist > 0) {
-    if (s_search.dist < 100) snprintf(info2, sizeof(info2), "ca. %d cm · ", s_search.dist);
-    else snprintf(info2, sizeof(info2), "ca. %d,%d m · ", s_search.dist / 100, (s_search.dist % 100) / 10);
+    if (s_search.dist < 100) snprintf(info2, sizeof(info2), tr(S_DIST_CM), s_search.dist);
+    else snprintf(info2, sizeof(info2), tr(S_DIST_M), s_search.dist / 100, (s_search.dist % 100) / 10);
+    strncat(info2, " · ", sizeof(info2) - strlen(info2) - 1);
   }
-  size_t l = strlen(info2);
-  snprintf(info2 + l, sizeof(info2) - l, "%d,%d Messungen/s", s_search.rate10 / 10, s_search.rate10 % 10);
+  snprintf(rate, sizeof(rate), tr(S_RATE), s_search.rate10 / 10, s_search.rate10 % 10);
+  strncat(info2, rate, sizeof(info2) - strlen(info2) - 1);
   graphics_context_set_text_color(ctx, GColorFromHEX(0xAAAAAA));
   graphics_draw_text(ctx, info2, fonts_get_system_font(FONT_KEY_GOTHIC_14), GRect(14, 162, b.size.w - 28, 18),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 
-  // Bottom line: toast, phone hint or feedback mode
+  // Bottom line: toast, phone hint or signal mode
   const char *bottom;
   GColor bc = GColorFromHEX(0xAAAAAA);
   if (now < s_toast_until) { bottom = s_toast; bc = GColorWhite; }
   else if (s_status_text[0]) { bottom = s_status_text; bc = GColorFromHEX(0xFF5555); }
-  else if ((s_status & ST_SCREEN_OFF) && s_search.rate10 < 15) { bottom = "Handy-Display aus: langsamer"; bc = GColorFromHEX(0xFFAA00); }
-  else bottom = FEEDBACK_NAMES[s_feedback & 3];
+  else if ((s_status & ST_SCREEN_OFF) && s_search.rate10 < 15) { bottom = tr(S_SCREEN_OFF); bc = GColorFromHEX(0xFFAA00); }
+  else bottom = feedback_name(s_feedback);
   graphics_context_set_text_color(ctx, bc);
   graphics_draw_text(ctx, bottom, fonts_get_system_font(FONT_KEY_GOTHIC_14), GRect(14, b.size.h - 36, b.size.w - 28, 18),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 }
 
-// Beeps/vibration like a Geiger counter: faster and higher when closer
+// ---- Sound and vibration: faster and higher when closer ----
+static const SpeakerSample BEEP_SAMPLE = {
+  .data = SOUND_BEEP, .num_bytes = sizeof(SOUND_BEEP), .format = SpeakerPcmFormat_16kHz_16bit,
+  .base_midi_note = SOUND_BEEP_MIDI, .loop = false,
+};
+static const SpeakerSample CLICK_SAMPLE = {
+  .data = SOUND_CLICK, .num_bytes = sizeof(SOUND_CLICK), .format = SpeakerPcmFormat_16kHz_16bit,
+  .base_midi_note = SOUND_CLICK_MIDI, .loop = false,
+};
+
+static void play_blip(int t /* 0..1000, 1000 = very close */) {
+  if (s_cfg.volume == 0) return;
+  static SpeakerNote note;
+  static SpeakerTrack track;
+  bool click = s_cfg.sound == SOUND_STYLE_CLICK;
+  note.midi_note = click ? (uint8_t)(SOUND_CLICK_MIDI - 3 + t * 6 / 1000) : (uint8_t)(69 + t * 24 / 1000);
+  note.waveform = SpeakerWaveformSine;
+  note.duration_ms = click ? 30 : 160;
+  note.velocity = 0;
+  note.reserved = 0;
+  track.notes = &note;
+  track.num_notes = 1;
+  track.sample = click ? &CLICK_SAMPLE : &BEEP_SAMPLE;
+  if (!speaker_play_tracks(&track, 1, s_cfg.volume)) {
+    speaker_play_tone((uint16_t)(440 + 1320 * t / 1000), 40, s_cfg.volume / 2, SpeakerWaveformSine);
+  }
+}
+
 static uint32_t beep_interval(int rssi) {
   int t = clampi((rssi + 95) * 1000 / 50, 0, 1000);
   int inv = 1000 - t;
@@ -654,11 +857,10 @@ static void beep_cb(void *ctx) {
   if (!lost && s_feedback) {
     next = beep_interval(s_search.rssi);
     int t = clampi((s_search.rssi + 95) * 1000 / 50, 0, 1000);
-#if defined(PBL_SPEAKER)
-    if (s_feedback & 1) speaker_play_tone((uint16_t)(500 + 1700 * t / 1000), 35, 60, SpeakerWaveformTriangle);
-#endif
+    if (s_feedback & 1) play_blip(t);
     if (s_feedback & 2) {
-      static const uint32_t seg[] = {40};
+      static uint32_t seg[1];
+      seg[0] = s_cfg.vibe ? 80 : 35;
       VibePattern pat = {.durations = seg, .num_segments = 1};
       vibes_enqueue_custom_pattern(pat);
     }
@@ -673,27 +875,27 @@ static void ui_tick(void *ctx) {
   else if (s_empty_layer && !layer_get_hidden(s_empty_layer)) layer_mark_dirty(s_empty_layer);
 }
 
-static void search_select(ClickRecognizerRef r, void *ctx) {
+// ---- Search actions (buttons and touch) ----
+static void cycle_feedback(void) {
   s_feedback = (s_feedback + 1) & 3;
-#if defined(PBL_SPEAKER)
-  if ((s_feedback & 1) && speaker_is_muted()) {
-    toast("Ton ist auf der Uhr stumm");
-    return;
-  }
-#endif
-  toast(FEEDBACK_NAMES[s_feedback]);
+  if ((s_feedback & 1) && speaker_is_muted()) toast(tr(S_MUTED));
+  else toast(feedback_name(s_feedback));
 }
 
-static void search_up(ClickRecognizerRef r, void *ctx) {
+static void reset_peak(void) {
   s_search.peak = s_search.have ? s_search.rssi : -127;
-  toast("Bestwert zurückgesetzt");
+  toast(tr(S_PEAK_RESET));
 }
 
-static void search_down(ClickRecognizerRef r, void *ctx) {
-  s_light_on = !s_light_on;
-  light_enable(s_light_on);
-  toast(s_light_on ? "Licht bleibt an" : "Licht automatisch");
+static void toggle_light(void) {
+  s_light_forced = !s_light_forced;
+  apply_light();
+  toast(s_light_forced ? tr(S_LIGHT_ON) : tr(S_LIGHT_AUTO));
 }
+
+static void search_select(ClickRecognizerRef r, void *ctx) { cycle_feedback(); }
+static void search_up(ClickRecognizerRef r, void *ctx) { reset_peak(); }
+static void search_down(ClickRecognizerRef r, void *ctx) { toggle_light(); }
 
 static void search_clicks(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_SELECT, search_select);
@@ -710,14 +912,17 @@ static void search_load(Window *w) {
 
 static void search_unload(Window *w) {
   s_in_search = false;
+  s_light_forced = false;
+  apply_light();
   if (s_beep_timer) { app_timer_cancel(s_beep_timer); s_beep_timer = NULL; }
-  if (s_light_on) { s_light_on = false; light_enable(false); }
   layer_destroy(s_search_layer);
   s_search_layer = NULL;
   window_destroy(s_search_window);
   s_search_window = NULL;
   s_current_cmd = CMD_LIST;
   send_cmd(CMD_LIST, 0);
+  s_last_interaction = 0;
+  if (s_menu) resort_now();
 }
 
 static void open_search(const Device *d) {
@@ -738,36 +943,116 @@ static void open_search(const Device *d) {
   window_set_click_config_provider(s_search_window, search_clicks);
   window_set_window_handlers(s_search_window, (WindowHandlers){.load = search_load, .unload = search_unload});
   window_stack_push(s_search_window, true);
+  apply_light();
   s_beep_timer = app_timer_register(500, beep_cb, NULL);
+}
+
+// ---- Touch (Pebble Time 2): own handling, the system touch bridge is off for apps ----
+static struct {
+  bool down, drag;
+  int16_t x0, y0, x, y;
+  int64_t t0;
+  int rows_applied;
+} s_touch;
+
+static void list_tap(int16_t x, int16_t y) {
+  if (!s_menu || window_stack_get_top_window() != s_list_window) return;
+  GPoint off = scroll_layer_get_content_offset(menu_layer_get_scroll_layer(s_menu));
+  int cy = y - off.y;
+  if (cy < HEADER_H) {  // header: sort now
+    resort_now();
+    vibes_short_pulse();
+    return;
+  }
+  int row = (cy - HEADER_H) / ROW_H;
+  if (row < 0 || row >= s_view_count) return;
+  s_programmatic = true;
+  menu_layer_set_selected_index(s_menu, (MenuIndex){0, row}, MenuRowAlignNone, false);
+  s_programmatic = false;
+  open_search(&s_live[s_view[row]]);
+}
+
+static void search_tap(int16_t x, int16_t y) {
+  if (y < 56) toggle_light();
+  else if (y < 150) reset_peak();
+  else cycle_feedback();
+}
+
+static void touch_handler(const TouchEvent *e, void *ctx) {
+  switch (e->type) {
+    case TouchEvent_Touchdown:
+      s_touch.down = !e->non_navigational;
+      s_touch.drag = false;
+      s_touch.x0 = s_touch.x = e->x;
+      s_touch.y0 = s_touch.y = e->y;
+      s_touch.t0 = now_ms();
+      s_touch.rows_applied = 0;
+      mark_interaction();
+      break;
+    case TouchEvent_PositionUpdate: {
+      if (!s_touch.down) break;
+      s_touch.x = e->x;
+      s_touch.y = e->y;
+      int dx = s_touch.x - s_touch.x0, dy = s_touch.y0 - s_touch.y;  // dy > 0: finger moved up
+      if (iabs(dx) > 12 || iabs(dy) > 12) s_touch.drag = true;
+      if (s_touch.drag && !s_in_search && s_menu) {
+        int rows = dy / 30;  // drag to scroll: one row per 30 px
+        s_programmatic = true;
+        while (rows > s_touch.rows_applied) {
+          menu_layer_set_selected_next(s_menu, false, MenuRowAlignCenter, true);
+          s_touch.rows_applied++;
+        }
+        while (rows < s_touch.rows_applied) {
+          menu_layer_set_selected_next(s_menu, true, MenuRowAlignCenter, true);
+          s_touch.rows_applied--;
+        }
+        s_programmatic = false;
+      }
+      mark_interaction();
+      break;
+    }
+    case TouchEvent_Liftoff: {
+      if (!s_touch.down) break;
+      s_touch.down = false;
+      int dx = s_touch.x - s_touch.x0, dy = s_touch.y - s_touch.y0;
+      if (!s_touch.drag && now_ms() - s_touch.t0 < 600) {
+        if (s_in_search) search_tap(s_touch.x0, s_touch.y0);
+        else list_tap(s_touch.x0, s_touch.y0);
+      } else if (s_in_search && dx > 60 && iabs(dy) < 50) {
+        window_stack_pop(true);  // swipe right: back to the list
+      }
+      mark_interaction();
+      break;
+    }
+  }
 }
 
 // ---- Demo data for the emulator ----
 #if FMA_DEMO
 static void demo_fill(void) {
   static const struct { const char *n, *d; uint8_t c; int8_t r; uint8_t age; uint8_t fl; } demo[] = {
-    {"AirTag", "Find My getrennt, Akku voll", CAT_TRACKER, -54, 0, 0},
-    {"Mikes Buds", "Fast Pair", CAT_AUDIO, -61, 0, FL_BONDED},
-    {"iPhone/iPad/Mac", "Apple in der Nähe", CAT_PHONE, -66, 0, 0},
+    {"AirTag", "separated · battery full", CAT_TRACKER, -54, 0, 0},
+    {"Mike's Buds", "Google Fast Pair", CAT_AUDIO, -61, 0, FL_BONDED},
+    {"iPhone/iPad/Mac", "Apple nearby", CAT_PHONE, -66, 0, 0},
     {"Pebble Time 2", "Wearable", CAT_WEARABLE, -68, 0, FL_BONDED},
     {"Galaxy SmartTag", "Samsung SmartTag", CAT_TRACKER, -72, 1, 0},
-    {"[TV] Samsung 7", "TV/Medien", CAT_MEDIA, -75, 0, 0},
+    {"[TV] Samsung 7", "TV/media", CAT_MEDIA, -75, 0, 0},
     {"LYWSD03MMC", "Xiaomi MiBeacon", CAT_SMARTHOME, -79, 2, 0},
-    {"Windows-Laptop", "Microsoft Windows-Laptop", CAT_COMPUTER, -83, 0, 0},
+    {"Windows laptop", "Microsoft", CAT_COMPUTER, -83, 0, 0},
     {"MX Keys", "Logitech", CAT_INPUT, -86, 3, 0},
-    {"Tile", "Tile-Tracker", CAT_TRACKER, -91, 4, 0},
-    {"VW ID.3", "Fahrzeug", CAT_VEHICLE, -93, 20, 0},
+    {"Tile", "Tile tracker", CAT_TRACKER, -91, 4, 0},
+    {"VW ID.3", "Vehicle", CAT_VEHICLE, -93, 20, 0},
   };
-  s_live_count = ARRAY_LENGTH(demo);
-  for (int i = 0; i < s_live_count; i++) {
-    Device *d = &s_live[i];
+  s_build_count = ARRAY_LENGTH(demo);
+  for (int i = 0; i < s_build_count; i++) {
+    Device *d = &s_build[i];
     d->id = i + 1; d->rssi = demo[i].r; d->cat = demo[i].c; d->flags = demo[i].fl; d->age = demo[i].age;
     snprintf(d->name, TEXT_LEN, "%s", demo[i].n);
     snprintf(d->detail, TEXT_LEN, "%s", demo[i].d);
   }
-  s_total = s_live_count + 3;
   s_got_data = true;
   s_status = ST_CLASSIC_ACTIVE;
-  rebuild_view();
+  commit_list(s_build_count + 3);
 }
 
 static void demo_tick(void *ctx) {
@@ -782,7 +1067,7 @@ static void demo_tick(void *ctx) {
   s_search.trend10 = 14;
   s_search.rate10 = 72;
   s_search.dist = 180;
-  if (s_search.rssi > s_search.peak) s_search.peak = s_search.rssi + 2;
+  if (s_search.rssi + 2 > s_search.peak) s_search.peak = s_search.rssi + 2;
   if (s_search_layer) layer_mark_dirty(s_search_layer);
 }
 #endif
@@ -790,7 +1075,16 @@ static void demo_tick(void *ctx) {
 // ---- App ----
 static void init(void) {
   s_start_ms = now_ms();
-  if (persist_exists(PERSIST_FEEDBACK)) s_feedback = persist_read_int(PERSIST_FEEDBACK) & 3;
+  s_cfg.lang = (uint8_t)i18n_lang_from_locale();
+  if (persist_exists(PERSIST_SETTINGS)) {
+    Settings stored;
+    if (persist_read_data(PERSIST_SETTINGS, &stored, sizeof(stored)) == (int)sizeof(stored)) {
+      apply_settings((const uint8_t *)&stored, sizeof(stored), false);
+    }
+  }
+  i18n_set_lang(s_cfg.lang);
+  s_filter = s_cfg.start_filter;
+  s_feedback = s_cfg.feedback;
 
   app_message_register_inbox_received(inbox_received);
   app_message_register_inbox_dropped(inbox_dropped);
@@ -800,15 +1094,18 @@ static void init(void) {
   if (in_size > 2048) in_size = 2048;
   app_message_open(in_size, 64);
 
-#if FMA_DEMO
-  demo_fill();
-  app_timer_register(400, demo_tick, NULL);
-#endif
-
   s_list_window = window_create();
   window_set_background_color(s_list_window, GColorBlack);
   window_set_window_handlers(s_list_window, (WindowHandlers){.load = list_load, .unload = list_unload});
   window_stack_push(s_list_window, true);
+  apply_light();
+
+  touch_service_subscribe(touch_handler, NULL);
+
+#if FMA_DEMO
+  demo_fill();
+  app_timer_register(400, demo_tick, NULL);
+#endif
 
   send_cmd(CMD_LIST, 0);
   s_keepalive_timer = app_timer_register(KEEPALIVE_MS, keepalive_cb, NULL);
@@ -816,7 +1113,8 @@ static void init(void) {
 }
 
 static void deinit(void) {
-  persist_write_int(PERSIST_FEEDBACK, s_feedback);
+  touch_service_unsubscribe();
+  light_enable(false);
   if (s_keepalive_timer) app_timer_cancel(s_keepalive_timer);
   if (s_ui_timer) app_timer_cancel(s_ui_timer);
   if (s_retry_timer) app_timer_cancel(s_retry_timer);

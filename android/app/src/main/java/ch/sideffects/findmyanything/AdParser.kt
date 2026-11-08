@@ -1,6 +1,7 @@
 package ch.sideffects.findmyanything
 
 import android.bluetooth.BluetoothClass
+import android.content.res.Resources
 
 /** Parsed BLE advertisement (legacy or extended, incl. scan response). */
 class AdInfo {
@@ -87,6 +88,11 @@ object AdParser {
 }
 
 object Classifier {
+    /** Texts in the chosen language; set by the engine. */
+    @Volatile var res: Resources? = null
+
+    private fun s(id: Int, vararg args: Any): String = res?.getString(id, *args) ?: ""
+
     private const val APPLE = 0x004C
     private const val MICROSOFT = 0x0006
 
@@ -141,11 +147,11 @@ object Classifier {
     )
 
     private val msDeviceTypes = mapOf(
-        1 to ("Xbox" to Category.MEDIA), 6 to ("iPhone" to Category.PHONE), 7 to ("iPad" to Category.PHONE),
-        8 to ("Android-Gerät" to Category.PHONE), 9 to ("Windows-PC" to Category.COMPUTER),
-        11 to ("Windows Phone" to Category.PHONE), 12 to ("Linux-PC" to Category.COMPUTER),
-        13 to ("Windows IoT" to Category.OTHER), 14 to ("Surface Hub" to Category.COMPUTER),
-        15 to ("Windows-Laptop" to Category.COMPUTER), 16 to ("Windows-Tablet" to Category.COMPUTER),
+        1 to (0 to Category.MEDIA), 6 to (0 to Category.PHONE), 7 to (0 to Category.PHONE),
+        8 to (R.string.c_android_device to Category.PHONE), 9 to (R.string.c_windows_pc to Category.COMPUTER),
+        11 to (0 to Category.PHONE), 12 to (R.string.c_linux_pc to Category.COMPUTER),
+        13 to (0 to Category.OTHER), 14 to (0 to Category.COMPUTER),
+        15 to (R.string.c_windows_laptop to Category.COMPUTER), 16 to (R.string.c_windows_tablet to Category.COMPUTER),
     )
 
     private class Acc {
@@ -257,24 +263,25 @@ object Classifier {
                 val status = fm[0].toInt() and 0xFF
                 val kind = when ((status shr 4) and 0x03) {
                     1 -> "AirTag"
-                    2 -> "Find-My-Zubehör"
+                    2 -> s(R.string.c_findmy_acc)
                     3 -> "AirPods"
-                    else -> "Apple-Gerät"
+                    else -> s(R.string.c_apple_device)
                 }
                 val bat = when ((status shr 6) and 0x03) {
-                    0 -> "voll"; 1 -> "mittel"; 2 -> "schwach"; else -> "kritisch"
+                    0 -> s(R.string.c_bat_full); 1 -> s(R.string.c_bat_medium)
+                    2 -> s(R.string.c_bat_low); else -> s(R.string.c_bat_critical)
                 }
                 a.sigExtra = "fm-sep-${(status shr 4) and 3}"
-                a.set(kind, "getrennt · Akku $bat", Category.TRACKER)
+                a.set(kind, s(R.string.c_separated, bat), Category.TRACKER)
             }
             fm != null -> {
                 a.sigExtra = "fm-near"
-                a.set("Find-My-Gerät", "beim Besitzer", Category.TRACKER)
+                a.set(s(R.string.c_findmy_device), s(R.string.c_with_owner), Category.TRACKER)
             }
             pp != null -> {
                 val model = if (pp.size >= 3) (pp[1].toInt() and 0xFF) or ((pp[2].toInt() and 0xFF) shl 8) else 0
                 a.sigExtra = "pp-%04x".format(model)
-                a.set(airpodsModels[model] ?: "AirPods/Beats", "Apple Kopfhörer", Category.AUDIO)
+                a.set(airpodsModels[model] ?: "AirPods/Beats", s(R.string.c_apple_headphones), Category.AUDIO)
             }
             ib != null && ib.size >= 21 -> {
                 val major = ((ib[16].toInt() and 0xFF) shl 8) or (ib[17].toInt() and 0xFF)
@@ -283,14 +290,14 @@ object Classifier {
                 a.sigExtra = "ib-$major-$minor"
                 a.set("iBeacon", "iBeacon $major/$minor", Category.BEACON)
             }
-            types.containsKey(0x09) -> { a.sigExtra = "airplay"; a.set("AirPlay-Gerät", "Apple TV/HomePod/Mac", Category.MEDIA) }
+            types.containsKey(0x09) -> { a.sigExtra = "airplay"; a.set(s(R.string.c_airplay), "Apple TV/HomePod/Mac", Category.MEDIA) }
             types.containsKey(0x0B) -> { a.sigExtra = "watch"; a.set("Apple Watch", "Apple Watch", Category.WEARABLE) }
-            types.containsKey(0x0E) -> { a.sigExtra = "hotspot"; a.set("iPhone", "iPhone (Hotspot)", Category.PHONE) }
-            types.containsKey(0x10) -> { a.sigExtra = "nearby"; a.set("iPhone/iPad/Mac", "Apple in der Nähe", Category.PHONE) }
+            types.containsKey(0x0E) -> { a.sigExtra = "hotspot"; a.set("iPhone", s(R.string.c_hotspot), Category.PHONE) }
+            types.containsKey(0x10) -> { a.sigExtra = "nearby"; a.set("iPhone/iPad/Mac", s(R.string.c_apple_nearby), Category.PHONE) }
             types.containsKey(0x0F) -> { a.sigExtra = "action"; a.set("iPhone/iPad", "Apple Nearby Action", Category.PHONE) }
             types.containsKey(0x0C) -> { a.sigExtra = "handoff"; a.set("iPhone/iPad/Mac", "Apple Handoff", Category.PHONE) }
             types.containsKey(0x05) -> { a.sigExtra = "airdrop"; a.set("iPhone/iPad/Mac", "Apple AirDrop", Category.PHONE) }
-            else -> { a.sigExtra = "apple-" + types.keys.joinToString("-"); a.set("Apple-Gerät", "Apple", Category.OTHER) }
+            else -> { a.sigExtra = "apple-" + types.keys.joinToString("-"); a.set(s(R.string.c_apple_device), "Apple", Category.OTHER) }
         }
     }
 
@@ -299,13 +306,17 @@ object Classifier {
         when (d[0].toInt() and 0xFF) {
             0x01 -> if (d.size >= 2) {
                 val type = d[1].toInt() and 0x1F
-                val (label, cat) = msDeviceTypes[type] ?: ("Microsoft-Gerät" to Category.OTHER)
+                val (labelId, cat) = msDeviceTypes[type] ?: (R.string.c_ms_device to Category.OTHER)
+                val label = when (type) {
+                    1 -> "Xbox"; 6 -> "iPhone"; 7 -> "iPad"; 11 -> "Windows Phone"; 13 -> "Windows IoT"; 14 -> "Surface Hub"
+                    else -> s(labelId)
+                }
                 a.sigExtra = "cdp-$type"
-                a.set(label, "Microsoft $label", cat)
+                a.set(label, "Microsoft · $label", cat)
             }
             0x03 -> {
                 a.sigExtra = "swiftpair"
-                a.set(null, "Swift Pair, Kopplungsmodus", Category.OTHER)
+                a.set(null, "Swift Pair, " + s(R.string.c_pairing_mode), Category.OTHER)
             }
         }
     }
@@ -317,23 +328,23 @@ object Classifier {
             when (frame) {
                 0x40, 0x41 -> {
                     a.sigExtra = "fmdn"
-                    a.set("Find-Hub-Tracker", if (frame == 0x41) "Google Find Hub, fremd" else "Google Find Hub", Category.TRACKER)
+                    a.set(s(R.string.c_find_hub), if (frame == 0x41) s(R.string.c_find_hub_foreign) else "Google Find Hub", Category.TRACKER)
                 }
                 0x00, 0x10 -> {
                     if (e.size >= 2) a.measured1m = e[1].toInt() - 41
-                    a.set("Eddystone", "Eddystone-Beacon", Category.BEACON)
+                    a.set("Eddystone", s(R.string.c_eddystone), Category.BEACON)
                 }
-                else -> a.set("Eddystone", "Eddystone-Beacon", Category.BEACON)
+                else -> a.set("Eddystone", s(R.string.c_eddystone), Category.BEACON)
             }
         }
         if (sd.containsKey(0xFD5A)) a.set("Galaxy SmartTag", "Samsung SmartTag", Category.TRACKER)
-        if (sd.containsKey(0xFD59)) a.set("Galaxy SmartTag", "SmartTag, Einrichtung", Category.TRACKER)
-        if (sd.containsKey(0xFD69)) a.set("Samsung-Gerät", "Samsung Offline-Finden", Category.OTHER)
+        if (sd.containsKey(0xFD59)) a.set("Galaxy SmartTag", s(R.string.c_smarttag_setup), Category.TRACKER)
+        if (sd.containsKey(0xFD69)) a.set(s(R.string.c_samsung_device), s(R.string.c_samsung_offline), Category.OTHER)
         if (sd.containsKey(0xFEED) || sd.containsKey(0xFEEC) || sd.containsKey(0xFD84) ||
             ad.uuids16.contains(0xFEED) || ad.uuids16.contains(0xFEEC) || ad.uuids16.contains(0xFD84)
-        ) a.set("Tile", "Tile-Tracker", Category.TRACKER)
-        if (sd.containsKey(0xFE33) || ad.uuids16.contains(0xFE33)) a.set("Chipolo", "Chipolo-Tracker", Category.TRACKER)
-        sd[0xFE2C]?.let { a.set(null, if (it.size == 3) "Fast Pair, Kopplungsmodus" else "Google Fast Pair", Category.AUDIO) }
+        ) a.set("Tile", s(R.string.c_tile), Category.TRACKER)
+        if (sd.containsKey(0xFE33) || ad.uuids16.contains(0xFE33)) a.set("Chipolo", s(R.string.c_chipolo), Category.TRACKER)
+        sd[0xFE2C]?.let { a.set(null, if (it.size == 3) "Fast Pair, " + s(R.string.c_pairing_mode) else "Google Fast Pair", Category.AUDIO) }
         if (sd.containsKey(0xFE95)) a.set(null, "Xiaomi MiBeacon", Category.SMARTHOME)
         if (sd.containsKey(0xFEE0) || ad.uuids16.contains(0xFEE0)) a.set(null, "Amazfit/Mi Band", Category.WEARABLE)
         if (sd.containsKey(0xFE1F) || ad.uuids16.contains(0xFE1F)) a.set(null, "Garmin", Category.WEARABLE)
@@ -341,17 +352,17 @@ object Classifier {
         if (sd.containsKey(0xFE07) || ad.uuids16.contains(0xFE07)) a.set(null, "Sonos", Category.AUDIO)
         if (sd.containsKey(0xFE61) || ad.uuids16.contains(0xFE61)) a.set(null, "Logitech", Category.INPUT)
         if (sd.containsKey(0xFE0F) || ad.uuids16.contains(0xFE0F)) a.set(null, "Philips Hue", Category.SMARTHOME)
-        if (sd.containsKey(0xFD6F)) a.set(null, "Kontakt-Tracing", Category.PHONE)
+        if (sd.containsKey(0xFD6F)) a.set(null, s(R.string.c_contact_tracing), Category.PHONE)
     }
 
     private fun uuidCategory(u: Set<Int>): Pair<String, Int>? = when {
-        u.contains(0x180D) -> "Herzfrequenz" to Category.HEALTH
-        u.contains(0x1812) -> "Eingabegerät" to Category.INPUT
+        u.contains(0x180D) -> s(R.string.c_heart_rate) to Category.HEALTH
+        u.contains(0x1812) -> s(R.string.c_input_device) to Category.INPUT
         u.any { it in 0x1843..0x1856 } -> "LE Audio" to Category.AUDIO
         u.contains(0x110B) || u.contains(0x110A) || u.contains(0x111E) -> "Audio" to Category.AUDIO
-        u.contains(0x181A) || u.contains(0x1809) -> "Sensor" to Category.SMARTHOME
-        u.contains(0x1816) || u.contains(0x1814) || u.contains(0x1826) || u.contains(0x1818) -> "Sport-Sensor" to Category.HEALTH
-        u.contains(0x1810) || u.contains(0x1808) || u.contains(0x181D) || u.contains(0x1822) -> "Medizin" to Category.HEALTH
+        u.contains(0x181A) || u.contains(0x1809) -> s(R.string.c_sensor) to Category.SMARTHOME
+        u.contains(0x1816) || u.contains(0x1814) || u.contains(0x1826) || u.contains(0x1818) -> s(R.string.c_sport_sensor) to Category.HEALTH
+        u.contains(0x1810) || u.contains(0x1808) || u.contains(0x181D) || u.contains(0x1822) -> s(R.string.c_medical) to Category.HEALTH
         else -> null
     }
 

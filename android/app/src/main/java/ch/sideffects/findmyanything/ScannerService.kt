@@ -52,10 +52,11 @@ class ScannerService : Service() {
         @Volatile private var running = false
 
         private fun notification(context: Context): Notification {
+            val r = SettingsStore.localized(context).resources
             val nm = context.getSystemService(NotificationManager::class.java)
             if (nm != null && nm.getNotificationChannel(CHANNEL) == null) {
                 nm.createNotificationChannel(
-                    NotificationChannel(CHANNEL, "Suche läuft", NotificationManager.IMPORTANCE_LOW)
+                    NotificationChannel(CHANNEL, r.getString(R.string.status_scanning), NotificationManager.IMPORTANCE_LOW)
                 )
             }
             val open = PendingIntent.getActivity(
@@ -64,8 +65,8 @@ class ScannerService : Service() {
             )
             return NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_radar)
-                .setContentTitle("Find My Anything sucht")
-                .setContentText("Die Uhr zeigt Bluetooth-Geräte in der Nähe")
+                .setContentTitle(r.getString(R.string.notif_title))
+                .setContentText(r.getString(R.string.notif_text))
                 .setOngoing(true)
                 .setContentIntent(open)
                 .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
