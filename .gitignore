@@ -1,0 +1,21 @@
+# Build output
+watch/build/
+android/build/
+android/app/build/
+android/.gradle/
+android/.kotlin/
+android/local.properties
+*.apk
+*.pbw
+!store/**/*.pbw
+
+# Secrets never go into git
+*.p12
+*.jks
+*.keystore
+keystore*.txt
+
+.DS_Store
+*.iml
+.idea/
+.lock-waf*

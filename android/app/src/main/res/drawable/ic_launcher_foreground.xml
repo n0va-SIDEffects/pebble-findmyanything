@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Radar: a dot with three signal arcs, centred in the 66dp safe zone of 108dp -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+        android:width="108dp"
+        android:height="108dp"
+        android:viewportWidth="108"
+        android:viewportHeight="108">
+    <path android:fillColor="@color/icon_fg"
+          android:pathData="M40,68m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0"/>
+    <path android:strokeColor="@color/icon_fg" android:strokeWidth="5"
+          android:strokeLineCap="round" android:fillColor="#00000000"
+          android:pathData="M40,54 A14,14 0 0 1 54,68"/>
+    <path android:strokeColor="@color/icon_fg" android:strokeWidth="5"
+          android:strokeLineCap="round" android:fillColor="#00000000"
+          android:pathData="M40,42 A26,26 0 0 1 66,68"/>
+    <path android:strokeColor="@color/icon_fg" android:strokeWidth="5"
+          android:strokeLineCap="round" android:fillColor="#00000000"
+          android:pathData="M40,30 A38,38 0 0 1 78,68"/>
+</vector>

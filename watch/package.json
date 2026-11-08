@@ -1,0 +1,58 @@
+{
+  "name": "findmyanything",
+  "author": "SIDEffect's",
+  "version": "1.0.0",
+  "keywords": ["pebble-app", "bluetooth", "finder"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Find My Anything",
+    "uuid": "cba78834-b48b-444a-b40e-0b10a7cbd608",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": ["emery"],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": {
+      "Cmd": 1,
+      "Target": 2,
+      "Type": 10,
+      "Seq": 11,
+      "Part": 12,
+      "Parts": 13,
+      "Total": 14,
+      "Data": 15,
+      "Rssi": 20,
+      "Peak": 21,
+      "Age": 22,
+      "Dist": 23,
+      "Trend": 24,
+      "Name": 25,
+      "Detail": 26,
+      "Raw": 27,
+      "Rate": 28,
+      "Category": 29,
+      "Status": 30,
+      "StatusText": 31
+    },
+    "companionApp": {
+      "android": {
+        "url": "https://github.com/n0va-SIDEffects/pebble-findmyanything",
+        "apps": [
+          { "package": "ch.sideffects.findmyanything" }
+        ]
+      }
+    },
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MENU_ICON",
+          "file": "images/menu_icon.png",
+          "menuIcon": true
+        }
+      ]
+    }
+  }
+}
