@@ -1,0 +1,20 @@
+Find any Bluetooth device nearby by its signal strength: warmer, colder, found it.
+Lost your earbuds, the tracker on your keys or the TV remote? Find My Anything turns your Pebble Time 2 into a Bluetooth finder. The companion Android app scans for devices nearby, the watch lists them and guides you to the one you pick with colour, sound and vibration. Your phone can stay in your pocket.
+
+NEEDS THE FREE ANDROID APP (not in the Play Store): download it from github.com/n0va-SIDEffects/pebble-findmyanything/releases, the Pebble app also links to it. Android only, no iPhone.
+
+Features
+- Devices nearby, strongest first: trackers (AirTag, SmartTag, Tile), earbuds, phones, computers, watches, TVs, sensors
+- Search screen: big signal number, green = right next to it, red = far away, an arrow shows whether you are getting closer
+- Beeps and buzzes faster the closer you get: sound, vibration or both
+- Filter by type, a calm list that holds still while you scroll, touch support
+- Settings in the Pebble app or in the phone app
+- 7 languages: English, Deutsch, Français, Italiano, Español, Português, Nederlands
+
+Buttons
+List: Select searches the device, hold Select to filter.
+Search: Select switches sound and vibration, Up resets the best value, Down turns on the backlight.
+
+Good to know: signal strength tells you warmer or colder, not an exact distance. Only devices that are switched on and sending can be found. Connected earbuds often stay silent, and classic Bluetooth devices only show up in pairing mode.
+
+Free, open source (MIT) and without ads. If you enjoy it: buymeacoffee.com/SIDEffects

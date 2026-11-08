@@ -1144,7 +1144,7 @@ static void touch_handler(const TouchEvent *e, void *ctx) {
 #if FMA_DEMO
 static void demo_fill(void) {
   static const struct { const char *n, *d; uint8_t c; int8_t r; uint8_t age; uint8_t fl; } demo[] = {
-    {"AirTag", "separated · battery full", CAT_TRACKER, -54, 0, 0},
+    {"AirTag", "Find My · separated", CAT_TRACKER, -54, 0, 0},
     {"Mike's Buds", "Google Fast Pair", CAT_AUDIO, -61, 0, FL_BONDED},
     {"iPhone/iPad/Mac", "Apple nearby", CAT_PHONE, -66, 0, 0},
     {"Pebble Time 2", "Wearable", CAT_WEARABLE, -68, 0, FL_BONDED},
@@ -1173,13 +1173,20 @@ static void demo_tick(void *ctx) {
   if (!s_in_search) return;
   static int phase;
   phase++;
+  // the chosen demo device sets the scene: AirTag near and green, Tile far and red
+  int base = -58;
+  for (int i = 0; i < s_live_count; i++) {
+    if (s_live[i].id == s_search.id) base = s_live[i].rssi;
+  }
+  int dist = 50;  // cm, about x1.12 per dB below -54
+  for (int k = -54; k > base; k--) dist = dist * 112 / 100;
   s_search.last_msg = now_ms();
   s_search.have = true;
   s_search.age10 = 1;
-  s_search.rssi = -58 + (phase % 7) - 3;
-  s_search.trend10 = 14;
-  s_search.rate10 = 72;
-  s_search.dist = 180;
+  s_search.rssi = base + (phase % 5) - 2;
+  s_search.trend10 = base < -85 ? -14 : 14;  // far: moving away, otherwise getting closer
+  s_search.rate10 = base > -80 ? 72 : 31;
+  s_search.dist = dist;
   if (s_search.rssi + 2 > s_search.peak) s_search.peak = s_search.rssi + 2;
   if (s_search_layer) layer_mark_dirty(s_search_layer);
 }

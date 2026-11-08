@@ -119,7 +119,8 @@ aber seltener. Am schnellsten ist die Suche mit eingeschaltetem Handy-Display.
 Eine Versionsnummer für alles: `version` in `watch/package.json` (die Android-App liest sie
 beim Bauen, `versionCode` ist die Build-Nummer von GitHub Actions).
 
-1. Version in `watch/package.json` erhöhen, Release-Text `docs/releases/v<Version>.md` schreiben.
+1. Version in `watch/package.json` erhöhen, immer `Major.Minor` (z. B. `1.3`; der Pebble-Appstore
+   lehnt `1.3.0` ab), Release-Text `docs/releases/v<Version>.md` schreiben.
 2. `cd watch && pebble build`, committen, pushen; GitHub Actions baut die APK.
 3. `( set -a; . ~/.hermes/.env; set +a; python3 tools/release.py )` – wartet auf den Build,
    legt den Release `v<Version>` an und lädt APK (Release-Schlüssel) und PBW hoch.

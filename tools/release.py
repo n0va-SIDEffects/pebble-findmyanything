@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Creates or updates the GitHub release for the current version.
 
-Version: watch/package.json ("version"), the same for watchapp and phone app.
+Version: watch/package.json ("version"), the same for watchapp and phone app,
+always Major.Minor (the Pebble appstore rejects 1.2.0 with a bare "400").
 Release text: docs/releases/v<version>.md
 Assets: FindMyAnything-<version>.apk (from the GitHub Actions build of HEAD,
 signed with the release key) and FindMyAnything-<version>.pbw (watch/build/watch.pbw,
@@ -165,6 +166,10 @@ def main():
 
     upload = rel["upload_url"].split("{")[0]
     existing = {a["name"]: a["id"] for a in rel.get("assets", [])}
+    for name, asset_id in existing.items():
+        if name not in (apk[0], pbw[0]):   # e.g. files of an older version label
+            gh.call("DELETE", f"/repos/{repo}/releases/assets/{asset_id}")
+            print(f"  removed old asset {name}")
     for name, data in (apk, pbw):
         if name in existing:
             gh.call("DELETE", f"/repos/{repo}/releases/assets/{existing[name]}")
