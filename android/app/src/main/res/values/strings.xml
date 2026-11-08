@@ -83,6 +83,9 @@
     <string name="s_watch_hint">Changes reach the watch as soon as the app is open there.</string>
     <string name="s_app_intro">The same settings are in the Pebble app under Find My Anything › Settings. The last change counts.</string>
     <string name="s_page_intro">The same settings are in the Find My Anything phone app. The last change counts.</string>
+    <string name="s_dl_section">Android app</string>
+    <string name="s_dl_text">Find My Anything needs its free Android app: it does the Bluetooth search. The app is not in the Play Store, it is on GitHub.</string>
+    <string name="s_dl_button">Download the Android app</string>
     <string name="save">Save</string>
     <string name="s_support">Support</string>
     <string name="s_support_text">Find My Anything is free and has no ads. If you enjoy it, a coffee is much appreciated.</string>

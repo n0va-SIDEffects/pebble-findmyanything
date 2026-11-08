@@ -9,9 +9,12 @@
 //    table gets the translation (text only, so "&" and markup are safe).
 // 2. Support button: Buy Me a Coffee yellow (#FFDD00, black text) instead of
 //    Clay's orange, which would look like a second Save button.
+// 3. Download button for the Android app: the GitHub page of the newest release
+//    (APK and install guide), in the green of "very close" on the watch.
 module.exports = function (minified) {
   var clayConfig = this;
   var DONATE_URL = 'https://buymeacoffee.com/SIDEffects';
+  var DOWNLOAD_URL = 'https://github.com/n0va-SIDEffects/pebble-findmyanything/releases/latest';
   var BMC_CSS = [
     'button[data-donate="bmc"] {',
     '  background-color: #ffdd00 !important;',
@@ -21,8 +24,28 @@ module.exports = function (minified) {
     '}',
     'button[data-donate="bmc"]:active {',
     '  background-color: #f2d100 !important;',
+    '}',
+    'button[data-download="apk"] {',
+    '  background-color: #55aa55 !important;',
+    '  color: #ffffff !important;',
+    '  text-transform: none !important;',
+    '}',
+    'button[data-download="apk"]:active {',
+    '  background-color: #448844 !important;',
     '}'
   ].join('\n');
+
+  function openLink(url) {
+    var w = null;
+    try {
+      w = window.open(url, '_blank');
+    } catch (e) {
+      w = null;
+    }
+    if (!w) {
+      window.location.href = url;
+    }
+  }
 
   function phoneLanguage() {
     try {
@@ -57,26 +80,19 @@ module.exports = function (minified) {
       document.documentElement.setAttribute('lang', lang);
     }
 
-    var button = clayConfig.getItemById('donate');
-    if (!button) {
-      return;
-    }
     if (!document.getElementById('bmc-style')) {
       var style = document.createElement('style');
       style.id = 'bmc-style';
       style.appendChild(document.createTextNode(BMC_CSS));
       document.head.appendChild(style);
     }
-    button.on('click', function () {
-      var w = null;
-      try {
-        w = window.open(DONATE_URL, '_blank');
-      } catch (e) {
-        w = null;
-      }
-      if (!w) {
-        window.location.href = DONATE_URL;
-      }
-    });
+    var donate = clayConfig.getItemById('donate');
+    if (donate) {
+      donate.on('click', function () { openLink(DONATE_URL); });
+    }
+    var download = clayConfig.getItemById('download');
+    if (download) {
+      download.on('click', function () { openLink(DOWNLOAD_URL); });
+    }
   });
 };

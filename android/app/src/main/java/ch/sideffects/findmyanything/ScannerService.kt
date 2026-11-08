@@ -64,7 +64,7 @@ class ScannerService : Service() {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             return NotificationCompat.Builder(context, CHANNEL)
-                .setSmallIcon(R.drawable.ic_stat_radar)
+                .setSmallIcon(R.drawable.ic_stat_pin)
                 .setContentTitle(r.getString(R.string.notif_title))
                 .setContentText(r.getString(R.string.notif_text))
                 .setOngoing(true)

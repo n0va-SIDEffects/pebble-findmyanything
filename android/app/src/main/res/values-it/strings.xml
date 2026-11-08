@@ -82,6 +82,9 @@
     <string name="s_watch_hint">Le modifiche arrivano all\'orologio appena l\'app è aperta lì.</string>
     <string name="s_app_intro">Le stesse impostazioni sono nell\'app Pebble in Find My Anything › Impostazioni. Vale l\'ultima modifica.</string>
     <string name="s_page_intro">Le stesse impostazioni sono nell\'app Find My Anything sul telefono. Vale l\'ultima modifica.</string>
+    <string name="s_dl_section">App Android</string>
+    <string name="s_dl_text">Find My Anything ha bisogno della sua app Android gratuita: è lei a fare la ricerca Bluetooth. L\'app non è nel Play Store, si trova su GitHub.</string>
+    <string name="s_dl_button">Scarica l\'app Android</string>
     <string name="save">Salva</string>
     <string name="s_support">Supporta</string>
     <string name="s_support_text">Find My Anything è gratuito e senza pubblicità. Se ti piace, un caffè è molto apprezzato.</string>

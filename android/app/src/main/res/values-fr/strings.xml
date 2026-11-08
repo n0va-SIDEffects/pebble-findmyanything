@@ -82,6 +82,9 @@
     <string name="s_watch_hint">Les modifications arrivent sur la montre dès que l\'app y est ouverte.</string>
     <string name="s_app_intro">Les mêmes réglages se trouvent dans l\'app Pebble sous Find My Anything › Réglages. La dernière modification compte.</string>
     <string name="s_page_intro">Les mêmes réglages se trouvent dans l\'app Find My Anything du téléphone. La dernière modification compte.</string>
+    <string name="s_dl_section">App Android</string>
+    <string name="s_dl_text">Find My Anything a besoin de son app Android gratuite : c\'est elle qui fait la recherche Bluetooth. L\'app n\'est pas sur le Play Store, elle est sur GitHub.</string>
+    <string name="s_dl_button">Télécharger l\'app Android</string>
     <string name="save">Enregistrer</string>
     <string name="s_support">Soutenir</string>
     <string name="s_support_text">Find My Anything est gratuit et sans publicité. Si l\'app te plaît, un café me fera très plaisir.</string>

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="bg">#FF101418</color>
-    <color name="icon_bg">#FF0F3D3E</color>
-    <color name="icon_fg">#FFFFB347</color>
+    <!-- navy of the watch and store icons (store/icon/make_icons.py) -->
+    <color name="icon_bg">#FF161E2A</color>
 </resources>

@@ -82,6 +82,9 @@
     <string name="s_watch_hint">Änderungen gehen an die Uhr, sobald die App dort offen ist.</string>
     <string name="s_app_intro">Die gleichen Einstellungen findest du auch in der Pebble-App unter Find My Anything › Einstellungen. Es gilt die letzte Änderung.</string>
     <string name="s_page_intro">Die gleichen Einstellungen findest du auch in der Find-My-Anything-App auf dem Handy. Es gilt die letzte Änderung.</string>
+    <string name="s_dl_section">Android-App</string>
+    <string name="s_dl_text">Find My Anything braucht die kostenlose Android-App: Sie übernimmt die Bluetooth-Suche. Die App ist nicht im Play Store, sondern auf GitHub.</string>
+    <string name="s_dl_button">Android-App herunterladen</string>
     <string name="save">Speichern</string>
     <string name="s_support">Unterstützen</string>
     <string name="s_support_text">Find My Anything ist kostenlos und ohne Werbung. Wenn es dir Freude macht, freue ich mich über einen Kaffee.</string>

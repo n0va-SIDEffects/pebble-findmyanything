@@ -21,6 +21,18 @@ module.exports = [
   {
     type: 'section',
     items: [
+      { type: 'heading', defaultValue: 'Android app' },
+      {
+        type: 'text',
+        defaultValue: 'Find My Anything needs its free Android app: it does the Bluetooth search. ' +
+          'The app is not in the Play Store, it is on GitHub.'
+      },
+      { type: 'button', id: 'download', defaultValue: 'Download the Android app', attributes: { 'data-download': 'apk' } }
+    ]
+  },
+  {
+    type: 'section',
+    items: [
       { type: 'heading', defaultValue: 'Watch: list' },
       {
         type: 'select', messageKey: 'sort', label: 'Sort by', defaultValue: '0',
