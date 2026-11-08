@@ -1,7 +1,7 @@
 # Find My Anything
 
 Findet Bluetooth-Geräte in der Nähe über ihre Signalstärke. Die **Android-App sucht**,
-die **Pebble-Watchapp zeigt an** und führt dich mit Balken, Ton und Vibration zum Gerät
+die **Pebble-Watchapp zeigt an** und führt dich mit Farbe, Ton und Vibration zum Gerät
 (wärmer/kälter). Das Handy kann dabei in der Tasche bleiben.
 
 ```
@@ -9,28 +9,53 @@ Uhr (Watchapp, emery)  ⇄  Pebble-App  ⇄  Find-My-Anything-App (Android, such
                  AppMessage        PebbleKit Android 2
 ```
 
+Farben überall als Ampel: **grün = direkt daneben**, gelb/orange = mittel, **rot = weit weg**.
+
+Sprachen: Englisch, Deutsch, Französisch, Italienisch, Spanisch, Portugiesisch (Brasilien),
+Niederländisch – Handy-App und Uhr, wählbar in den Einstellungen (Standard: Handy-Sprache).
+
 ## Bedienung auf der Uhr
 
-**Liste** (sortiert nach Signalstärke, ältere Einträge grau)
+**Liste** (ältere Einträge grau). Die Reihenfolge bleibt ruhig: Während du blätterst und
+5 s danach sortiert nichts um; danach rückt ein Gerät nur auf, wenn es deutlich (6 dB)
+stärker ist.
 
-| Taste | Wirkung |
+| Taste / Touch | Wirkung |
 |---|---|
-| Hoch/Runter | blättern |
-| Select | Gerät suchen |
+| Hoch/Runter, Wischen | blättern |
+| Select, Tippen auf eine Zeile | Gerät suchen |
 | Select lang | Filter wechseln: Alle → Tracker → Audio → Handy & PC → Wearables → Sonstige |
+| Tippen auf die Kopfzeile | sofort neu sortieren |
 
 Kopfzeile rechts: Handy-Symbol grün = alles gut, orange = Handy-Display aus (Suche langsamer),
 rot = Problem (Text erscheint, wenn die Liste leer ist). Blauer Punkt = Classic-Suchlauf aktiv.
 
-**Suche**: Der Rand füllt sich mit der Signalstärke (0–100), der weisse Strich ist der Bestwert.
-Pfeil hoch = du kommst näher, Pfeil runter = du entfernst dich.
+**Suche**: Der Rand füllt sich mit der Signalstärke, der weisse Strich ist der Bestwert.
+Grüner Pfeil = du kommst näher, roter Pfeil = du entfernst dich. Die grosse Zahl zeigt
+wahlweise 0–100 oder dBm.
 
-| Taste | Wirkung |
-|---|---|
-| Select | Signal: stumm → Ton → Vibration → Ton + Vibration |
-| Hoch | Bestwert zurücksetzen |
-| Runter | Licht dauerhaft an/aus |
-| Zurück | zur Liste |
+| Taste | Touch | Wirkung |
+|---|---|---|
+| Select | Tippen auf die unterste Zeile | Signal: stumm → Ton → Vibration → Ton + Vibration |
+| Hoch | Tippen auf die Zahl | Bestwert zurücksetzen |
+| Runter | Tippen oben | Licht dauerhaft an/aus |
+| Zurück | nach rechts wischen | zur Liste |
+
+## Einstellungen (in der Handy-App, Zahnrad «Einstellungen»)
+
+Die Watchapp hat bewusst kein PebbleKit JS (das würde der Android-App die Nachrichten
+wegnehmen), deshalb liegen die Einstellungen in der Handy-App. Sie gehen an die Uhr,
+sobald die Watchapp offen ist, und bleiben dort gespeichert.
+
+- **Uhr – Liste:** Sortierung (Signal/Name/Neueste), Takt fürs Neusortieren (5–60 s),
+  Filter beim Start, grosse Zahl als 0–100 oder dBm
+- **Ton & Vibration:** Signal zu Beginn (stumm/Ton/Vibration/beides), Klang (weicher Piepton
+  oder Geigerzähler-Klick), Lautstärke, Vibrationsstärke
+- **Beleuchtung:** automatisch, an während der Suche, immer an in der App
+- **Suche am Handy:** klassisches Bluetooth an/aus, schwache Signale ausblenden,
+  Geräte ohne Namen ausblenden (Tracker bleiben), wie lange Geräte ausser Reichweite bleiben
+- **Sprache**
+- **Unterstützen:** Buy me a coffee (https://buymeacoffee.com/SIDEffects)
 
 ## Was gefunden wird
 
@@ -63,9 +88,13 @@ aber seltener. Am schnellsten ist die Suche mit eingeschaltetem Handy-Display.
 
 - **Watchapp**: `cd watch && pebble build` (SDK 4.33.1, nur `emery`).
   Demo-Daten für Screenshots: `FMA_DEMO` in `src/c/main.c` auf 1.
+  Töne neu erzeugen: `python3 tools/make_sounds.py` (Sinus mit weichem Ein-/Ausklang,
+  40 % Aussteuerung, weil der Lautsprecher bei Vollaussteuerung verzerrt).
+  Texte der Uhr: `src/c/i18n.c`.
 - **Android-App**: GitHub Actions (`.github/workflows/android.yml`), signiert mit dem
   Schlüssel aus den Secrets `FMA_KEYSTORE_B64` / `FMA_KS_PASS`.
   Der Schlüssel liegt nicht im Repo. Lokal: `cd android && ./gradlew assembleRelease`
-  (dann Debug-Schlüssel).
+  (dann Debug-Schlüssel). Texte: Tabelle in `android/tools/strings.py`, danach
+  `python3 tools/strings.py` (erzeugt alle `values*/strings.xml`).
 
 Protokoll zwischen Uhr und Handy: [docs/protokoll.md](docs/protokoll.md).

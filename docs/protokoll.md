@@ -36,6 +36,18 @@ Alle Zahlen als int32.
 | 29 | Category | Kategorie |
 | 30 | Status | Bits: 0 BT aus, 1 Rechte fehlen, 2 Display aus, 3 Classic-Suchlauf, 4 Standort aus, 5 kein Hintergrund-Standort, 6 Scan-Fehler |
 | 31 | StatusText | Fehlertext für die Uhr oder leer |
+| 40 | Settings | Einstellungen (Bytes, siehe unten); hängt an der nächsten Nachricht, bis die Uhr sie bestätigt hat |
+
+Settings, 11 Byte, Version 1:
+
+```
+version=1 | sort (0 Signal, 1 Name, 2 Neueste) | resort_s | start_filter (0..5) |
+feedback (Bit 0 Ton, Bit 1 Vibration) | volume 0..100 | sound (0 Piepton, 1 Klick) |
+light (0 auto, 1 Suche, 2 immer) | big_number (0 0–100, 1 dBm) |
+lang (0 en, 1 de, 2 fr, 3 it, 4 es, 5 pt, 6 nl) | vibe (0 kurz, 1 kräftig)
+```
+
+Die Uhr speichert den Block im Flash (`persist`), bis neue Einstellungen kommen.
 
 Liste alle 2 s, Suche alle 250 ms. Ein Listeneintrag in `Data`:
 
