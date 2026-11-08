@@ -19,3 +19,4 @@ keystore*.txt
 *.iml
 .idea/
 .lock-waf*
+release/
