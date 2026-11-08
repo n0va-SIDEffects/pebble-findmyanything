@@ -40,7 +40,7 @@ jobs:
         run: ./gradlew --no-daemon --stacktrace assembleRelease
 
       - name: APK umbenennen
-        run: cp android/app/build/outputs/apk/release/app-release.apk "FindMyAnything-1.0.${{ github.run_number }}.apk"
+        run: cp android/app/build/outputs/apk/release/app-release.apk "FindMyAnything-1.2.${{ github.run_number }}.apk"
 
       - uses: actions/upload-artifact@v7
         with:
