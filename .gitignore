@@ -21,3 +21,5 @@ keystore*.txt
 .lock-waf*
 release/
 node_modules/
+__pycache__/
+*.pyc
