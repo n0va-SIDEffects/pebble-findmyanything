@@ -2,10 +2,12 @@
 #pragma once
 #include <pebble.h>
 
-#define SOUND_BEEP_LEN 1120
-#define SOUND_BEEP_MIDI 81  // 880 Hz
-extern const int16_t SOUND_BEEP[SOUND_BEEP_LEN];
+// One sine period in 256 steps, plus a guard entry (= entry 0) for interpolation
+extern const int16_t SINE_TABLE[257];
+
+// Beep envelope, Q15, peak 40% of full scale included
+#define BEEP_ENV_LEN 960
+extern const uint16_t BEEP_ENV[BEEP_ENV_LEN];
 
 #define SOUND_CLICK_LEN 144
-#define SOUND_CLICK_MIDI 72
 extern const int16_t SOUND_CLICK[SOUND_CLICK_LEN];

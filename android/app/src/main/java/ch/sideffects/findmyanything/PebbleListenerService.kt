@@ -21,10 +21,13 @@ class PebbleListenerService : BasePebbleListenerService() {
         watch: WatchIdentifier,
     ): ReceiveResult {
         if (watchappUUID != Protocol.WATCHAPP_UUID) return ReceiveResult.Nack
-        val cmd = data[Protocol.KEY_CMD]?.asInt() ?: Protocol.CMD_LIST
+        (data[Protocol.KEY_SETTINGS] as? PebbleDictionaryItem.Bytes)?.let {
+            SettingsStore.applyFromWatch(this, it.value)
+        }
+        val cmd = data[Protocol.KEY_CMD]?.asInt()
         val target = data[Protocol.KEY_TARGET]?.asInt()
         Log.d("FindMyAnything", "watch cmd=$cmd target=$target")
-        FinderEngine.watchCommand(cmd, target)
+        if (cmd != null) FinderEngine.watchCommand(cmd, target) else FinderEngine.watchContact()
         return ReceiveResult.Ack
     }
 

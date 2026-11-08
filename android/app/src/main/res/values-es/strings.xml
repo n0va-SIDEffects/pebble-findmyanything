@@ -80,6 +80,9 @@
     <string name="s_lang_auto">Automático (móvil)</string>
     <string name="s_lang_hint">Se aplica a la app y al reloj.</string>
     <string name="s_watch_hint">Los cambios llegan al reloj en cuanto la app está abierta allí.</string>
+    <string name="s_app_intro">Los mismos ajustes están en la app Pebble, en Find My Anything › Ajustes. Cuenta el último cambio.</string>
+    <string name="s_page_intro">Los mismos ajustes están en la app Find My Anything del móvil. Cuenta el último cambio.</string>
+    <string name="save">Guardar</string>
     <string name="s_support">Apoyar</string>
     <string name="s_support_text">Find My Anything es gratis y sin anuncios. Si te gusta, te agradezco mucho un café.</string>
     <string name="s_version">Versión %1$s</string>

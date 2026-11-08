@@ -20,3 +20,4 @@ keystore*.txt
 .idea/
 .lock-waf*
 release/
+node_modules/

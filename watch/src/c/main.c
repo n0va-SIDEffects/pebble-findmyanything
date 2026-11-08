@@ -1,11 +1,11 @@
 // Find My Anything: finds Bluetooth devices by signal strength.
 // The phone (Android companion app) scans; the watch shows the list and guides the search.
-// Settings come from the phone app (no PebbleKit JS: it would take the messages away
-// from the companion app) and are kept in flash.
+// Settings live on the watch (flash). The phone app and the settings page in the
+// Pebble app both send changes; the newest (stamp) wins and the watch passes it on.
 #include <pebble.h>
 #include "icons.h"
 #include "i18n.h"
-#include "sounds.h"
+#include "beeper.h"
 
 // 1 = fake data for emulator screenshots, no phone needed
 #ifndef FMA_DEMO
@@ -31,17 +31,28 @@ enum { TYPE_LIST = 1, TYPE_SEARCH = 2 };
 #define HEADER_H 24
 #define ROW_H 46
 
-// ---- Settings (sent by the phone, 11 bytes, version 1) ----
+// ---- Settings (19 bytes, version 2, docs/protokoll.md) ----
 enum { SORT_SIGNAL, SORT_NAME, SORT_NEWEST };
 enum { SOUND_STYLE_BEEP, SOUND_STYLE_CLICK };
 enum { LIGHT_AUTO, LIGHT_SEARCH, LIGHT_ALWAYS };
 enum { BIG_PERCENT, BIG_DBM };
+#define LANG_AUTO 255
+// Only single bytes, so the struct has no padding and is the wire format.
 typedef struct {
   uint8_t version, sort, resort_sec, start_filter, feedback, volume, sound, light, big_number, lang, vibe;
+  uint8_t classic;       // phone: also search classic Bluetooth
+  int8_t min_rssi;       // phone: hide weaker signals, -127 = off
+  uint8_t hide_unnamed;  // phone: hide devices without a name
+  uint8_t max_age_10s;   // phone: keep devices out of reach for n x 10 s
+  uint8_t stamp[4];      // unix time of the last change, little endian; the newer one wins
 } Settings;
-#define SETTINGS_VERSION 1
+#define SETTINGS_VERSION 2
+#define SETTINGS_V1_LEN 11
 #define PERSIST_SETTINGS 2
-static Settings s_cfg = {SETTINGS_VERSION, SORT_SIGNAL, 10, 0, 1, 30, SOUND_STYLE_BEEP, LIGHT_AUTO, BIG_PERCENT, LANG_EN, 0};
+static Settings s_cfg = {SETTINGS_VERSION, SORT_SIGNAL, 10, 0, 1, 30, SOUND_STYLE_BEEP, LIGHT_AUTO, BIG_PERCENT,
+                         LANG_AUTO, 0, 1, -127, 0, 6, {0, 0, 0, 0}};
+static bool s_settings_out;       // send our settings with the next message
+static bool s_last_had_settings;  // the message in flight carries them
 
 typedef struct {
   uint32_t id;
@@ -84,6 +95,20 @@ static bool s_got_data;
 static int64_t s_start_ms;
 static int s_filter;
 #define FILTER_COUNT 6
+
+// Touch gesture in progress (raw touch events; the list itself scrolls natively)
+static struct {
+  bool down, drag, in_search;
+  int16_t x0, y0, x, y;
+  int64_t t0;
+} s_touch;
+static int64_t s_touch_up_ms;
+static bool s_nav_by_touch;         // the list was last moved by the finger, not by buttons
+static bool s_commit_pending;       // a complete snapshot waits until the finger is off the list
+static bool s_build_ready;
+static int s_pending_total;
+static uint32_t s_shown_ids[MAX_DEVICES];
+static int s_shown_count = -1;
 
 static Search s_search;
 static bool s_in_search;
@@ -181,19 +206,25 @@ static void schedule_retry(int ms) {
 }
 
 static void try_send(void) {
-  if (FMA_DEMO || !s_pending_cmd || s_outbox_busy) return;
+  if (FMA_DEMO || (!s_pending_cmd && !s_settings_out) || s_outbox_busy) return;
   DictionaryIterator *it;
   if (app_message_outbox_begin(&it) != APP_MSG_OK) {
     schedule_retry(500);
     return;
   }
-  dict_write_uint8(it, MESSAGE_KEY_Cmd, (uint8_t)s_pending_cmd);
-  if (s_pending_cmd == CMD_SEARCH) dict_write_uint32(it, MESSAGE_KEY_Target, s_pending_target);
+  if (s_pending_cmd) {
+    dict_write_uint8(it, MESSAGE_KEY_Cmd, (uint8_t)s_pending_cmd);
+    if (s_pending_cmd == CMD_SEARCH) dict_write_uint32(it, MESSAGE_KEY_Target, s_pending_target);
+  }
+  bool with_cfg = s_settings_out;
+  if (with_cfg) dict_write_data(it, MESSAGE_KEY_Settings, (const uint8_t *)&s_cfg, sizeof(Settings));
   if (app_message_outbox_send() == APP_MSG_OK) {
     s_outbox_busy = true;
     s_last_cmd = s_pending_cmd;
     s_last_target = s_pending_target;
+    s_last_had_settings = with_cfg;
     s_pending_cmd = 0;
+    s_settings_out = false;
   } else {
     schedule_retry(500);
   }
@@ -213,6 +244,7 @@ static void outbox_sent(DictionaryIterator *it, void *ctx) {
 static void outbox_failed(DictionaryIterator *it, AppMessageResult reason, void *ctx) {
   APP_LOG(APP_LOG_LEVEL_WARNING, "outbox failed %d", (int)reason);
   s_outbox_busy = false;
+  if (s_last_had_settings) s_settings_out = true;
   if (!s_pending_cmd) {  // nothing newer queued: repeat the failed one
     s_pending_cmd = s_last_cmd;
     s_pending_target = s_last_target;
@@ -307,19 +339,33 @@ static uint32_t selected_id(void) {
 
 static void refresh_list(uint32_t keep_id) {
   if (!s_menu) return;
+  layer_set_hidden(s_empty_layer, s_view_count > 0);
+  layer_mark_dirty(s_empty_layer);
+  bool same = s_shown_count == s_view_count;
+  for (int r = 0; same && r < s_view_count; r++) same = s_shown_ids[r] == s_live[s_view[r]].id;
+  if (same) {  // same rows in the same order: just repaint the values
+    layer_mark_dirty(menu_layer_get_layer(s_menu));
+    return;
+  }
+  for (int r = 0; r < s_view_count; r++) s_shown_ids[r] = s_live[s_view[r]].id;
+  s_shown_count = s_view_count;
+
+  ScrollLayer *sl = menu_layer_get_scroll_layer(s_menu);
+  GPoint off = scroll_layer_get_content_offset(sl);
   s_programmatic = true;
   menu_layer_reload_data(s_menu);
   if (keep_id) {
+    int cur = menu_layer_get_selected_index(s_menu).row;
     for (int r = 0; r < s_view_count; r++) {
-      if (s_live[s_view[r]].id == keep_id) {
-        menu_layer_set_selected_index(s_menu, (MenuIndex){0, r}, MenuRowAlignNone, false);
+      if (s_shown_ids[r] == keep_id) {
+        if (r != cur) menu_layer_set_selected_index(s_menu, (MenuIndex){0, r}, MenuRowAlignNone, false);
         break;
       }
     }
   }
+  // After touch scrolling the finger decides what is visible, not the selection
+  if (s_nav_by_touch) scroll_layer_set_content_offset(sl, off, false);
   s_programmatic = false;
-  layer_set_hidden(s_empty_layer, s_view_count > 0);
-  layer_mark_dirty(s_empty_layer);
 }
 
 static void resort_now(void) {
@@ -395,6 +441,31 @@ static void commit_list(int total) {
   refresh_list(keep);
 }
 
+static bool list_touch_busy(void) {
+  return !s_in_search && s_menu && (s_touch.down || now_ms() - s_touch_up_ms < 1200);
+}
+
+static void finish_list(int total) {
+  s_build_ready = true;
+  if (list_touch_busy()) {
+    s_commit_pending = true;
+    s_pending_total = total;
+    return;
+  }
+  s_commit_pending = false;
+  commit_list(total);
+}
+
+static void deferred_commit(void *ctx) {
+  if (!s_commit_pending || !s_build_ready) return;
+  if (list_touch_busy()) {
+    app_timer_register(400, deferred_commit, NULL);
+    return;
+  }
+  s_commit_pending = false;
+  commit_list(s_pending_total);
+}
+
 static void handle_list(DictionaryIterator *it) {
   int seq = get_int(it, MESSAGE_KEY_Seq, 0);
   int part = get_int(it, MESSAGE_KEY_Part, 0);
@@ -403,6 +474,7 @@ static void handle_list(DictionaryIterator *it) {
     s_build_count = 0;
     s_build_seq = seq;
     s_build_next = 0;
+    s_build_ready = false;
   }
   if (seq != s_build_seq || part != s_build_next) {  // lost a part: wait for the next snapshot
     s_build_seq = -1;
@@ -411,7 +483,7 @@ static void handle_list(DictionaryIterator *it) {
   Tuple *data = dict_find(it, MESSAGE_KEY_Data);
   if (data) parse_entries(data->value->data, data->length);
   s_build_next++;
-  if (s_build_next >= parts) commit_list(get_int(it, MESSAGE_KEY_Total, s_build_count));
+  if (s_build_next >= parts) finish_list(get_int(it, MESSAGE_KEY_Total, s_build_count));
 }
 
 static void handle_search(DictionaryIterator *it) {
@@ -433,25 +505,62 @@ static void handle_search(DictionaryIterator *it) {
   layer_mark_dirty(s_search_layer);
 }
 
-// Settings blob from the phone
+static uint32_t stamp_of(const Settings *c) {
+  return (uint32_t)c->stamp[0] | ((uint32_t)c->stamp[1] << 8) | ((uint32_t)c->stamp[2] << 16) |
+         ((uint32_t)c->stamp[3] << 24);
+}
+
+static void apply_lang(void) {
+  i18n_set_lang(s_cfg.lang < LANG_COUNT ? s_cfg.lang : i18n_lang_from_locale());
+}
+
+static void sound_update(void);
+
+// Settings from the phone (companion app or settings page) or from flash.
+// Version 1 (11 bytes) comes from the 1.1 phone app and from flash of 1.1.
 static void apply_settings(const uint8_t *p, uint16_t len, bool from_phone) {
-  if (len < sizeof(Settings) || p[0] != SETTINGS_VERSION) return;
-  Settings n;
-  memcpy(&n, p, sizeof(Settings));
+  Settings n = s_cfg;
+  bool v2 = len >= sizeof(Settings) && p[0] == SETTINGS_VERSION;
+  if (v2) {
+    memcpy(&n, p, sizeof(Settings));
+  } else if (len >= SETTINGS_V1_LEN && p[0] == 1) {
+    memcpy(&n, p, SETTINGS_V1_LEN);  // watch part only; phone part and stamp stay
+    n.version = SETTINGS_VERSION;
+  } else {
+    return;
+  }
   n.sort = clampi(n.sort, 0, 2);
+  n.resort_sec = clampi(n.resort_sec, 2, 120);
   n.start_filter = clampi(n.start_filter, 0, FILTER_COUNT - 1);
   n.feedback &= 3;
   n.volume = clampi(n.volume, 0, 100);
   n.sound = clampi(n.sound, 0, 1);
   n.light = clampi(n.light, 0, 2);
   n.big_number = clampi(n.big_number, 0, 1);
-  n.lang = clampi(n.lang, 0, LANG_COUNT - 1);
+  if (n.lang >= LANG_COUNT) n.lang = LANG_AUTO;
+  n.vibe = clampi(n.vibe, 0, 1);
+  n.classic = n.classic ? 1 : 0;
+  n.min_rssi = clampi(n.min_rssi, -127, -40);
+  n.hide_unnamed = n.hide_unnamed ? 1 : 0;
+  n.max_age_10s = clampi(n.max_age_10s, 3, 30);
+
+  if (from_phone && v2) {
+    uint32_t in = stamp_of(&n), own = stamp_of(&s_cfg);
+    if (in < own) {  // the sender is behind: answer with ours
+      s_settings_out = true;
+      return;
+    }
+    if (in == own) return;
+    s_settings_out = true;  // pass it on to the other side on the phone
+  }
   bool changed = memcmp(&n, &s_cfg, sizeof(Settings)) != 0;
   Settings old = s_cfg;
   s_cfg = n;
-  i18n_set_lang(s_cfg.lang);
+  apply_lang();
   if (!changed) return;
   if (from_phone) persist_write_data(PERSIST_SETTINGS, &s_cfg, sizeof(s_cfg));
+  if (old.volume != n.volume && beeper_running()) beeper_set_volume(n.volume);
+  sound_update();
   if (old.start_filter != n.start_filter) s_filter = n.start_filter;
   if (old.feedback != n.feedback) s_feedback = n.feedback;
   if (old.sort != n.sort && s_order_count) sort_order(false);
@@ -463,9 +572,11 @@ static void apply_settings(const uint8_t *p, uint16_t len, bool from_phone) {
 }
 
 static void inbox_received(DictionaryIterator *it, void *ctx) {
-  s_got_data = true;
+  // The settings page in the Pebble app talks to us too; only the companion app counts as "phone"
+  if (dict_find(it, MESSAGE_KEY_Type) || dict_find(it, MESSAGE_KEY_Status)) s_got_data = true;
   Tuple *cfg = dict_find(it, MESSAGE_KEY_Settings);
   if (cfg) apply_settings(cfg->value->data, cfg->length, true);
+  if (dict_find(it, MESSAGE_KEY_SettingsReq)) s_settings_out = true;
   if (dict_find(it, MESSAGE_KEY_Status)) s_status = get_int(it, MESSAGE_KEY_Status, 0);
   Tuple *stt = dict_find(it, MESSAGE_KEY_StatusText);
   if (stt) snprintf(s_status_text, sizeof(s_status_text), "%s", stt->value->cstring);
@@ -475,6 +586,7 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
     default: break;
   }
   if (s_menu) layer_mark_dirty(menu_layer_get_layer(s_menu));
+  if (s_settings_out) try_send();
 }
 
 static void inbox_dropped(AppMessageResult reason, void *ctx) {
@@ -583,7 +695,10 @@ static void next_filter(void) {
 static void menu_select_long(MenuLayer *ml, MenuIndex *idx, void *ctx) { next_filter(); }
 
 static void menu_selection_changed(MenuLayer *ml, MenuIndex new_index, MenuIndex old_index, void *ctx) {
-  if (!s_programmatic) mark_interaction();
+  if (s_programmatic) return;
+  mark_interaction();
+  // A touch tap selects while the finger is still down (the system handles it first)
+  if (!s_touch.down && now_ms() - s_touch_up_ms > 400) s_nav_by_touch = false;
 }
 
 static void draw_multiline(GContext *ctx, const char *text, GRect r, const char *font, GColor color) {
@@ -596,7 +711,7 @@ static void empty_update(Layer *layer, GContext *ctx) {
   GRect b = layer_get_bounds(layer);
   graphics_context_set_fill_color(ctx, GColorBlack);
   graphics_fill_rect(ctx, b, 0, GCornerNone);
-  GPoint c = GPoint(b.size.w / 2, 62);
+  GPoint c = GPoint(b.size.w / 2, 44);
   graphics_context_set_stroke_color(ctx, GColorFromHEX(0xFFAA00));
   graphics_context_set_fill_color(ctx, GColorFromHEX(0xFFAA00));
   graphics_context_set_stroke_width(ctx, 3);
@@ -625,8 +740,13 @@ static void empty_update(Layer *layer, GContext *ctx) {
     title = tr(S_NOTHING);
     text = tr(S_KEEP_SEARCHING);
   }
-  draw_multiline(ctx, title, GRect(8, 112, b.size.w - 16, 30), FONT_KEY_GOTHIC_24_BOLD, GColorWhite);
-  draw_multiline(ctx, text, GRect(12, 142, b.size.w - 24, 80), FONT_KEY_GOTHIC_18, GColorFromHEX(0xAAAAAA));
+  // The title may wrap to two lines: measure it and put the text below
+  GFont tf = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  GRect tr_box = GRect(8, 84, b.size.w - 16, 60);
+  GSize ts = graphics_text_layout_get_content_size(title, tf, tr_box, GTextOverflowModeWordWrap, GTextAlignmentCenter);
+  draw_multiline(ctx, title, tr_box, FONT_KEY_GOTHIC_24_BOLD, GColorWhite);
+  int ty = 84 + ts.h + 4;
+  draw_multiline(ctx, text, GRect(12, ty, b.size.w - 24, b.size.h - ty), FONT_KEY_GOTHIC_18, GColorFromHEX(0xAAAAAA));
 }
 
 static void list_load(Window *w) {
@@ -815,31 +935,40 @@ static void search_update(Layer *layer, GContext *ctx) {
 }
 
 // ---- Sound and vibration: faster and higher when closer ----
-static const SpeakerSample BEEP_SAMPLE = {
-  .data = SOUND_BEEP, .num_bytes = sizeof(SOUND_BEEP), .format = SpeakerPcmFormat_16kHz_16bit,
-  .base_midi_note = SOUND_BEEP_MIDI, .loop = false,
-};
-static const SpeakerSample CLICK_SAMPLE = {
-  .data = SOUND_CLICK, .num_bytes = sizeof(SOUND_CLICK), .format = SpeakerPcmFormat_16kHz_16bit,
-  .base_midi_note = SOUND_CLICK_MIDI, .loop = false,
-};
+// One stream stays open for the whole search and the beeps are synthesised
+// into it (beeper.c). Starting the speaker for every beep restarts the audio
+// path of the Time 2 each time, and that crackled.
+static uint16_t blip_freq(int t /* 0..1000 */) { return (uint16_t)(900 + 900 * t / 1000); }
+
+static void sound_update(void) {
+  static bool s_logged;
+  bool want = s_in_search && (s_feedback & 1) && s_cfg.volume > 0;
+  if (want && !beeper_running()) {
+    if (!beeper_start(s_cfg.volume) && !s_logged) {
+      s_logged = true;
+      APP_LOG(APP_LOG_LEVEL_WARNING, "speaker stream unavailable");
+    }
+  } else if (!want && beeper_running()) {
+    beeper_stop();
+  }
+}
 
 static void play_blip(int t /* 0..1000, 1000 = very close */) {
   if (s_cfg.volume == 0) return;
-  static SpeakerNote note;
-  static SpeakerTrack track;
-  bool click = s_cfg.sound == SOUND_STYLE_CLICK;
-  note.midi_note = click ? (uint8_t)(SOUND_CLICK_MIDI - 3 + t * 6 / 1000) : (uint8_t)(69 + t * 24 / 1000);
-  note.waveform = SpeakerWaveformSine;
-  note.duration_ms = click ? 30 : 160;
-  note.velocity = 0;
-  note.reserved = 0;
-  track.notes = &note;
-  track.num_notes = 1;
-  track.sample = click ? &CLICK_SAMPLE : &BEEP_SAMPLE;
-  if (!speaker_play_tracks(&track, 1, s_cfg.volume)) {
-    speaker_play_tone((uint16_t)(440 + 1320 * t / 1000), 40, s_cfg.volume / 2, SpeakerWaveformSine);
+  if (!beeper_running()) sound_update();  // the speaker may have been busy at the start
+  if (beeper_running()) {
+    beeper_trigger(s_cfg.sound == SOUND_STYLE_CLICK ? BEEPER_CLICK : BEEPER_BEEP, blip_freq(t));
+    return;
   }
+  // Fallback if the stream could not be opened (speaker busy)
+  speaker_play_tone(blip_freq(t), 40, s_cfg.volume / 2, SpeakerWaveformSine);
+}
+
+static void vibe_now(void *ctx) {
+  static uint32_t seg[1];
+  seg[0] = s_cfg.vibe ? 80 : 35;
+  VibePattern pat = {.durations = seg, .num_segments = 1};
+  vibes_enqueue_custom_pattern(pat);
 }
 
 static uint32_t beep_interval(int rssi) {
@@ -859,10 +988,9 @@ static void beep_cb(void *ctx) {
     int t = clampi((s_search.rssi + 95) * 1000 / 50, 0, 1000);
     if (s_feedback & 1) play_blip(t);
     if (s_feedback & 2) {
-      static uint32_t seg[1];
-      seg[0] = s_cfg.vibe ? 80 : 35;
-      VibePattern pat = {.durations = seg, .num_segments = 1};
-      vibes_enqueue_custom_pattern(pat);
+      // The beep is heard after the stream's lead time; vibrate together with it
+      if ((s_feedback & 1) && beeper_running()) app_timer_register(beeper_latency_ms(), vibe_now, NULL);
+      else vibe_now(NULL);
     }
   }
   s_beep_timer = app_timer_register(next, beep_cb, NULL);
@@ -878,6 +1006,7 @@ static void ui_tick(void *ctx) {
 // ---- Search actions (buttons and touch) ----
 static void cycle_feedback(void) {
   s_feedback = (s_feedback + 1) & 3;
+  sound_update();
   if ((s_feedback & 1) && speaker_is_muted()) toast(tr(S_MUTED));
   else toast(feedback_name(s_feedback));
 }
@@ -912,6 +1041,7 @@ static void search_load(Window *w) {
 
 static void search_unload(Window *w) {
   s_in_search = false;
+  sound_update();  // close the stream before anything else goes out
   s_light_forced = false;
   apply_light();
   if (s_beep_timer) { app_timer_cancel(s_beep_timer); s_beep_timer = NULL; }
@@ -944,32 +1074,23 @@ static void open_search(const Device *d) {
   window_set_window_handlers(s_search_window, (WindowHandlers){.load = search_load, .unload = search_unload});
   window_stack_push(s_search_window, true);
   apply_light();
+  sound_update();
   s_beep_timer = app_timer_register(500, beep_cb, NULL);
 }
 
-// ---- Touch (Pebble Time 2): own handling, the system touch bridge is off for apps ----
-static struct {
-  bool down, drag;
-  int16_t x0, y0, x, y;
-  int64_t t0;
-  int rows_applied;
-} s_touch;
-
-static void list_tap(int16_t x, int16_t y) {
+// ---- Touch (Pebble Time 2) ----
+// The list is a MenuLayer: with app_touch_navigation_enable() the system scrolls
+// it 1:1 under the finger (with coasting and a scrollbar), and a tap on a row
+// opens it. Own handling only where the system has nothing: the search screen
+// (custom layer) and a tap on the list header. Raw touch events turn the system's
+// button emulation off, the native list scrolling stays.
+static void list_header_tap(int16_t x, int16_t y) {
   if (!s_menu || window_stack_get_top_window() != s_list_window) return;
   GPoint off = scroll_layer_get_content_offset(menu_layer_get_scroll_layer(s_menu));
-  int cy = y - off.y;
-  if (cy < HEADER_H) {  // header: sort now
+  if (y - off.y < HEADER_H) {  // header: sort now
     resort_now();
     vibes_short_pulse();
-    return;
   }
-  int row = (cy - HEADER_H) / ROW_H;
-  if (row < 0 || row >= s_view_count) return;
-  s_programmatic = true;
-  menu_layer_set_selected_index(s_menu, (MenuIndex){0, row}, MenuRowAlignNone, false);
-  s_programmatic = false;
-  open_search(&s_live[s_view[row]]);
 }
 
 static void search_tap(int16_t x, int16_t y) {
@@ -983,47 +1104,39 @@ static void touch_handler(const TouchEvent *e, void *ctx) {
     case TouchEvent_Touchdown:
       s_touch.down = !e->non_navigational;
       s_touch.drag = false;
+      s_touch.in_search = s_in_search;
       s_touch.x0 = s_touch.x = e->x;
       s_touch.y0 = s_touch.y = e->y;
       s_touch.t0 = now_ms();
-      s_touch.rows_applied = 0;
+      if (s_touch.down && !s_in_search) s_nav_by_touch = true;
       mark_interaction();
       break;
-    case TouchEvent_PositionUpdate: {
+    case TouchEvent_PositionUpdate:
       if (!s_touch.down) break;
       s_touch.x = e->x;
       s_touch.y = e->y;
-      int dx = s_touch.x - s_touch.x0, dy = s_touch.y0 - s_touch.y;  // dy > 0: finger moved up
-      if (iabs(dx) > 12 || iabs(dy) > 12) s_touch.drag = true;
-      if (s_touch.drag && !s_in_search && s_menu) {
-        int rows = dy / 30;  // drag to scroll: one row per 30 px
-        s_programmatic = true;
-        while (rows > s_touch.rows_applied) {
-          menu_layer_set_selected_next(s_menu, false, MenuRowAlignCenter, true);
-          s_touch.rows_applied++;
-        }
-        while (rows < s_touch.rows_applied) {
-          menu_layer_set_selected_next(s_menu, true, MenuRowAlignCenter, true);
-          s_touch.rows_applied--;
-        }
-        s_programmatic = false;
-      }
+      if (iabs(s_touch.x - s_touch.x0) > 12 || iabs(s_touch.y - s_touch.y0) > 12) s_touch.drag = true;
       mark_interaction();
       break;
-    }
     case TouchEvent_Liftoff: {
       if (!s_touch.down) break;
       s_touch.down = false;
+      s_touch_up_ms = now_ms();
+      // A tap on a list row has just opened the search (the system went first): ignore it here
+      bool same_screen = s_touch.in_search == s_in_search;
       int dx = s_touch.x - s_touch.x0, dy = s_touch.y - s_touch.y0;
-      if (!s_touch.drag && now_ms() - s_touch.t0 < 600) {
+      if (same_screen && !s_touch.drag && s_touch_up_ms - s_touch.t0 < 600) {
         if (s_in_search) search_tap(s_touch.x0, s_touch.y0);
-        else list_tap(s_touch.x0, s_touch.y0);
-      } else if (s_in_search && dx > 60 && iabs(dy) < 50) {
+        else list_header_tap(s_touch.x0, s_touch.y0);
+      } else if (same_screen && s_in_search && dx > 60 && iabs(dy) < 50) {
         window_stack_pop(true);  // swipe right: back to the list
       }
       mark_interaction();
+      if (s_commit_pending) app_timer_register(1250, deferred_commit, NULL);
       break;
     }
+    default:
+      break;
   }
 }
 
@@ -1075,14 +1188,12 @@ static void demo_tick(void *ctx) {
 // ---- App ----
 static void init(void) {
   s_start_ms = now_ms();
-  s_cfg.lang = (uint8_t)i18n_lang_from_locale();
   if (persist_exists(PERSIST_SETTINGS)) {
-    Settings stored;
-    if (persist_read_data(PERSIST_SETTINGS, &stored, sizeof(stored)) == (int)sizeof(stored)) {
-      apply_settings((const uint8_t *)&stored, sizeof(stored), false);
-    }
+    uint8_t stored[32];
+    int n = persist_read_data(PERSIST_SETTINGS, stored, sizeof(stored));
+    if (n > 0) apply_settings(stored, (uint16_t)n, false);
   }
-  i18n_set_lang(s_cfg.lang);
+  apply_lang();
   s_filter = s_cfg.start_filter;
   s_feedback = s_cfg.feedback;
 
@@ -1100,6 +1211,7 @@ static void init(void) {
   window_stack_push(s_list_window, true);
   apply_light();
 
+  app_touch_navigation_enable(true);  // native touch scrolling for the list
   touch_service_subscribe(touch_handler, NULL);
 
 #if FMA_DEMO
@@ -1107,12 +1219,14 @@ static void init(void) {
   app_timer_register(400, demo_tick, NULL);
 #endif
 
+  s_settings_out = true;  // the phone app and the settings page learn what the watch has
   send_cmd(CMD_LIST, 0);
   s_keepalive_timer = app_timer_register(KEEPALIVE_MS, keepalive_cb, NULL);
   s_ui_timer = app_timer_register(1000, ui_tick, NULL);
 }
 
 static void deinit(void) {
+  beeper_stop();
   touch_service_unsubscribe();
   light_enable(false);
   if (s_keepalive_timer) app_timer_cancel(s_keepalive_timer);

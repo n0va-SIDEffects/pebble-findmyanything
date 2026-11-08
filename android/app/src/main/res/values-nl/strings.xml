@@ -80,6 +80,9 @@
     <string name="s_lang_auto">Automatisch (telefoon)</string>
     <string name="s_lang_hint">Geldt voor de app en het horloge.</string>
     <string name="s_watch_hint">Wijzigingen komen op het horloge zodra de app daar open is.</string>
+    <string name="s_app_intro">Dezelfde instellingen staan in de Pebble-app onder Find My Anything › Instellingen. De laatste wijziging telt.</string>
+    <string name="s_page_intro">Dezelfde instellingen staan in de Find My Anything-app op je telefoon. De laatste wijziging telt.</string>
+    <string name="save">Opslaan</string>
     <string name="s_support">Steunen</string>
     <string name="s_support_text">Find My Anything is gratis en zonder advertenties. Vind je het fijn, dan waardeer ik een koffie enorm.</string>
     <string name="s_version">Versie %1$s</string>

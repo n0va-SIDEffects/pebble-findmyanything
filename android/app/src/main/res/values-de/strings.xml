@@ -80,6 +80,9 @@
     <string name="s_lang_auto">Automatisch (Handy)</string>
     <string name="s_lang_hint">Gilt für die Handy-App und die Uhr.</string>
     <string name="s_watch_hint">Änderungen gehen an die Uhr, sobald die App dort offen ist.</string>
+    <string name="s_app_intro">Die gleichen Einstellungen findest du auch in der Pebble-App unter Find My Anything › Einstellungen. Es gilt die letzte Änderung.</string>
+    <string name="s_page_intro">Die gleichen Einstellungen findest du auch in der Find-My-Anything-App auf dem Handy. Es gilt die letzte Änderung.</string>
+    <string name="save">Speichern</string>
     <string name="s_support">Unterstützen</string>
     <string name="s_support_text">Find My Anything ist kostenlos und ohne Werbung. Wenn es dir Freude macht, freue ich mich über einen Kaffee.</string>
     <string name="s_version">Version %1$s</string>

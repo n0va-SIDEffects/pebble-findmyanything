@@ -140,11 +140,14 @@ object FinderEngine {
         Classifier.res = res
     }
 
-    /** Called by SettingsStore after every change. */
-    fun settingsChanged() = handler.post {
+    /**
+     * Called by SettingsStore after every change. fromWatch: the watch already has
+     * them (it sent them); otherwise they go to the watch with the next message.
+     */
+    fun settingsChanged(fromWatch: Boolean) = handler.post {
         if (!::app.isInitialized) return@post
         updateLocale()
-        settingsPending = true
+        if (!fromWatch) settingsPending = true
         if (!SettingsStore.current.classic) {
             try { if (adapter()?.isDiscovering == true) adapter()?.cancelDiscovery() } catch (_: SecurityException) {}
         }
@@ -164,6 +167,16 @@ object FinderEngine {
     }
 
     fun watchClosed() = handler.post { closeWatch("app closed") }
+
+    /** A message from the watch without a command (settings only). */
+    fun watchContact() = handler.post {
+        lastWatchContact = now()
+        if (!watchActive) {
+            watchActive = true
+            settingsPending = true
+            updateActive()
+        }
+    }
 
     fun watchCommand(cmd: Int, target: Int?) = handler.post {
         lastWatchContact = now()

@@ -18,12 +18,14 @@ Niederländisch – Handy-App und Uhr, wählbar in den Einstellungen (Standard: 
 
 **Liste** (ältere Einträge grau). Die Reihenfolge bleibt ruhig: Während du blätterst und
 5 s danach sortiert nichts um; danach rückt ein Gerät nur auf, wenn es deutlich (6 dB)
-stärker ist.
+stärker ist. Solange der Finger auf der Liste liegt oder sie nachläuft, ändert sich nichts.
 
 | Taste / Touch | Wirkung |
 |---|---|
-| Hoch/Runter, Wischen | blättern |
+| Hoch/Runter | Auswahl verschieben |
+| Wischen | Liste scrollt unter dem Finger mit (mit Nachlauf und Scrollbalken), die Auswahl bleibt, wo sie ist |
 | Select, Tippen auf eine Zeile | Gerät suchen |
+| Nach rechts wischen | App beenden |
 | Select lang | Filter wechseln: Alle → Tracker → Audio → Handy & PC → Wearables → Sonstige |
 | Tippen auf die Kopfzeile | sofort neu sortieren |
 
@@ -41,11 +43,12 @@ wahlweise 0–100 oder dBm.
 | Runter | Tippen oben | Licht dauerhaft an/aus |
 | Zurück | nach rechts wischen | zur Liste |
 
-## Einstellungen (in der Handy-App, Zahnrad «Einstellungen»)
+## Einstellungen
 
-Die Watchapp hat bewusst kein PebbleKit JS (das würde der Android-App die Nachrichten
-wegnehmen), deshalb liegen die Einstellungen in der Handy-App. Sie gehen an die Uhr,
-sobald die Watchapp offen ist, und bleiben dort gespeichert.
+An zwei Stellen, mit denselben Einstellungen: in der Pebble-App (Find My Anything ›
+Einstellungen) und in der Find-My-Anything-App («Einstellungen» oben rechts). Die Uhr
+speichert sie; es gilt die letzte Änderung, die andere Seite übernimmt sie (Ablauf in
+[docs/protokoll.md](docs/protokoll.md)).
 
 - **Uhr – Liste:** Sortierung (Signal/Name/Neueste), Takt fürs Neusortieren (5–60 s),
   Filter beim Start, grosse Zahl als 0–100 oder dBm
@@ -88,9 +91,16 @@ aber seltener. Am schnellsten ist die Suche mit eingeschaltetem Handy-Display.
 
 - **Watchapp**: `cd watch && pebble build` (SDK 4.33.1, nur `emery`).
   Demo-Daten für Screenshots: `FMA_DEMO` in `src/c/main.c` auf 1.
-  Töne neu erzeugen: `python3 tools/make_sounds.py` (Sinus mit weichem Ein-/Ausklang,
-  40 % Aussteuerung, weil der Lautsprecher bei Vollaussteuerung verzerrt).
+  Ton: Während der Suche bleibt ein PCM-Strom offen, die Pieptöne rechnet die Uhr selbst
+  hinein (`src/c/beeper.c`, `src/c/audio_pump.c`). Grund: Auf der Time 2 schaltet die
+  Firmware nach jedem einzelnen Ton Audio-Chip und Verstärker ab und beim nächsten wieder
+  an, und sie verstimmt Samples ohne Interpolation – beides knackte und klang übersteuert.
+  Tabellen neu erzeugen: `python3 tools/make_sounds.py`. Prüfen ohne Uhr:
+  `tools/beeper_test.c` (rendert ein WAV) und `tools/beeper_check.py` (Sprünge, Oberwellen).
   Texte der Uhr: `src/c/i18n.c`.
+- **Einstellungsseite** (Clay, `src/pkjs/`): `npm install` einmal, Texte kommen aus
+  `android/tools/strings.py` (erzeugt `src/pkjs/i18n.js`). Tests: `node test/pkjs_test.js`,
+  `node test/pkjs_flow_test.js`.
 - **Android-App**: GitHub Actions (`.github/workflows/android.yml`), signiert mit dem
   Schlüssel aus den Secrets `FMA_KEYSTORE_B64` / `FMA_KS_PASS`.
   Der Schlüssel liegt nicht im Repo. Lokal: `cd android && ./gradlew assembleRelease`

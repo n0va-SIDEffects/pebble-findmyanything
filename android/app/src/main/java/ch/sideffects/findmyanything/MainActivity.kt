@@ -49,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -201,6 +202,10 @@ private fun proximity(r: Int): String = stringResource(
 
 @Composable
 private fun App(resumeTick: Int) {
+    val act = LocalContext.current as MainActivity
+    val settings by SettingsStore.flow.collectAsState()
+    // The language can also change from the settings page in the Pebble app
+    LaunchedEffect(settings.resolvedLanguage()) { act.languageMaybeChanged() }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = showSettings) { showSettings = false }
     if (showSettings) SettingsScreen(onBack = { showSettings = false })
@@ -378,6 +383,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
             Text(stringResource(R.string.settings), fontSize = 24.sp, fontWeight = FontWeight.Bold)
         }
         Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+            Hint(stringResource(R.string.s_app_intro))
             Hint(stringResource(R.string.s_watch_hint))
 
             Section(stringResource(R.string.s_watch_list))
