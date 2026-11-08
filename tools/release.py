@@ -144,9 +144,9 @@ def main():
     if git("status", "--porcelain", "--untracked-files=no"):
         sys.exit("Uncommitted changes: commit and push first")
     sha = git("rev-parse", "HEAD")
-    git("fetch", "-q", "origin")
-    if git("rev-parse", "origin/main") != sha:
-        sys.exit("HEAD is not origin/main: push first")
+    remote = gh.call("GET", f"/repos/{repo}/commits/main")
+    if not remote or remote["sha"] != sha:
+        sys.exit("HEAD is not main on GitHub: push first")
 
     print(f"{repo} {tag} at {sha[:7]}")
     pbw = check_pbw(version)
