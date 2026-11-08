@@ -5,6 +5,9 @@ plugins {
 
 // Build number from GitHub Actions; local builds count as 1.
 val buildNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+// One version for watchapp and phone app: the one in watch/package.json
+val appVersion: String = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"")
+    .find(rootProject.file("../watch/package.json").readText())!!.groupValues[1]
 // Release keystore (PKCS12) is provided by CI; without it the debug key is used.
 val keystorePath: String? = System.getenv("FMA_KEYSTORE")
 
@@ -17,7 +20,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = buildNumber
-        versionName = "1.2.$buildNumber"
+        versionName = appVersion
     }
 
     signingConfigs {

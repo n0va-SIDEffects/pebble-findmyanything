@@ -1,11 +1,9 @@
 name: Android-App bauen
 
 on:
+  # Every push: tools/release.py takes the APK of the released commit
   push:
     branches: [main]
-    paths:
-      - "android/**"
-      - ".github/workflows/android.yml"
   workflow_dispatch:
 
 jobs:
@@ -40,7 +38,9 @@ jobs:
         run: ./gradlew --no-daemon --stacktrace assembleRelease
 
       - name: APK umbenennen
-        run: cp android/app/build/outputs/apk/release/app-release.apk "FindMyAnything-1.2.${{ github.run_number }}.apk"
+        run: |
+          V=$(python3 -c "import json; print(json.load(open('watch/package.json'))['version'])")
+          cp android/app/build/outputs/apk/release/app-release.apk "FindMyAnything-$V.apk"
 
       - uses: actions/upload-artifact@v7
         with:

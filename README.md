@@ -14,6 +14,13 @@ Farben überall als Ampel: **grün = direkt daneben**, gelb/orange = mittel, **r
 Sprachen: Englisch, Deutsch, Französisch, Italienisch, Spanisch, Portugiesisch (Brasilien),
 Niederländisch – Handy-App und Uhr, wählbar in den Einstellungen (Standard: Handy-Sprache).
 
+## Installieren
+
+Fertige Dateien unter [Releases](https://github.com/n0va-SIDEffects/pebble-findmyanything/releases):
+`FindMyAnything-<Version>.apk` für das Handy, `FindMyAnything-<Version>.pbw` für die Uhr,
+Anleitung im Release-Text. Kein Play Store nötig; Updates automatisch mit
+[Obtainium](https://github.com/ImranR98/Obtainium) (Repo-Adresse hinzufügen).
+
 ## Bedienung auf der Uhr
 
 **Liste** (ältere Einträge grau). Die Reihenfolge bleibt ruhig: Während du blätterst und
@@ -76,7 +83,7 @@ Viele Geräte wechseln ihre Adresse; die App erkennt sie am Signalinhalt wieder.
 
 ## Einrichtung auf dem Handy (einmalig)
 
-1. APK installieren (aus GitHub Actions, Artefakt `findmyanything-apk`).
+1. APK aus den [Releases](https://github.com/n0va-SIDEffects/pebble-findmyanything/releases) installieren.
 2. App öffnen, unter «Einrichtung» alles auf ✓ bringen:
    Bluetooth-/Standort-Rechte, **Standort «Immer erlauben»**, **Akku-Optimierung aus**.
    Auf OPPO/ColorOS zusätzlich in den App-Infos «Hintergrundaktivität erlauben».
@@ -106,5 +113,16 @@ aber seltener. Am schnellsten ist die Suche mit eingeschaltetem Handy-Display.
   Der Schlüssel liegt nicht im Repo. Lokal: `cd android && ./gradlew assembleRelease`
   (dann Debug-Schlüssel). Texte: Tabelle in `android/tools/strings.py`, danach
   `python3 tools/strings.py` (erzeugt alle `values*/strings.xml`).
+
+## Release
+
+Eine Versionsnummer für alles: `version` in `watch/package.json` (die Android-App liest sie
+beim Bauen, `versionCode` ist die Build-Nummer von GitHub Actions).
+
+1. Version in `watch/package.json` erhöhen, Release-Text `docs/releases/v<Version>.md` schreiben.
+2. `cd watch && pebble build`, committen, pushen; GitHub Actions baut die APK.
+3. `( set -a; . ~/.hermes/.env; set +a; python3 tools/release.py )` – wartet auf den Build,
+   legt den Release `v<Version>` an und lädt APK (Release-Schlüssel) und PBW hoch.
+   `--prerelease` für Vorabversionen. Nochmals ausführen ersetzt Text und Dateien.
 
 Protokoll zwischen Uhr und Handy: [docs/protokoll.md](docs/protokoll.md).

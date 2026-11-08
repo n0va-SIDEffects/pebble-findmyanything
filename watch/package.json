@@ -48,7 +48,7 @@
     },
     "companionApp": {
       "android": {
-        "url": "https://github.com/n0va-SIDEffects/pebble-findmyanything",
+        "url": "https://github.com/n0va-SIDEffects/pebble-findmyanything/releases",
         "apps": [
           {
             "package": "ch.sideffects.findmyanything"
