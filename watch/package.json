@@ -1,6 +1,7 @@
 {
   "name": "findmyanything",
   "author": "SIDEffect's",
+  "license": "MIT",
   "version": "1.2.0",
   "keywords": [
     "pebble-app",

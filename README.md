@@ -126,3 +126,15 @@ beim Bauen, `versionCode` ist die Build-Nummer von GitHub Actions).
    `--prerelease` für Vorabversionen. Nochmals ausführen ersetzt Text und Dateien.
 
 Protokoll zwischen Uhr und Handy: [docs/protokoll.md](docs/protokoll.md).
+
+## Lizenz
+
+[MIT](LICENSE) © 2026 SIDEffect's.
+
+Mitgeliefert bzw. verwendet:
+- [Clay](https://github.com/pebble-dev/clay) für die Einstellungsseite (MIT), im PBW gebündelt.
+- [PebbleKit Android 2](https://github.com/pebble-dev/PebbleKitAndroid2) (Apache-2.0); das
+  Android-Projekt ist aus dessen Beispiel entstanden.
+- Hersteller-, Dienst- und Gerätetyp-Nummern aus den *Assigned Numbers* der Bluetooth SIG
+  ([bluetooth-SIG/public](https://bitbucket.org/bluetooth-SIG/public)), in
+  `android/app/src/main/assets/` aufbereitet.
