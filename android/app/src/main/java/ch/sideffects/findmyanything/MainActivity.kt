@@ -424,6 +424,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
                 s.sound,
             ) { i -> set { it.copy(sound = i) } }
             VolumeSlider(stringResource(R.string.s_volume), s.volume) { v -> set { it.copy(volume = v) } }
+            Hint(stringResource(R.string.s_speaker_hint))
             Choice(
                 stringResource(R.string.s_vibe),
                 listOf(stringResource(R.string.s_vibe_short), stringResource(R.string.s_vibe_strong)),

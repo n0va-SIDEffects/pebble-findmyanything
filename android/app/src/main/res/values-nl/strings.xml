@@ -55,6 +55,7 @@
     <string name="fb_vibe">Trillen</string>
     <string name="fb_both">Geluid + trillen</string>
     <string name="s_feedback_hint">Op het horloge wissel je dit tijdens het zoeken met Select of een tik op de onderste regel.</string>
+    <string name="s_speaker_hint">Geluid alleen op horloges met een luidspreker (Pebble Time 2, Pebble 2 Duo). De andere trillen in plaats daarvan.</string>
     <string name="s_sound">Klank</string>
     <string name="s_sound_beep">Zachte piep</string>
     <string name="s_sound_click">Geigerteller-tik</string>

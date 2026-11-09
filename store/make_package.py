@@ -7,7 +7,8 @@ Takes the watchapp from watch/build/watch.pbw (build it first: cd watch && rm -r
 build && pebble build; the store wants version Major.Minor and the clean build,
 waf misses changes in package.json otherwise), the icons and the banner from
 store/icon/ (make_icons.py, banner/make_banner.py), the screenshots from
-store/screenshots_emery/ and the texts from store/.
+store/screenshots_<platform>/ (one asset collection per platform; the banner
+goes into the same folder) and the texts from store/.
 """
 import glob
 import hashlib
@@ -49,9 +50,16 @@ shutil.rmtree(REL, ignore_errors=True)
 os.makedirs(REL)
 pbw = f"FindMyAnything-{version}.pbw"
 shutil.copy(pbw_src, os.path.join(REL, pbw))
-for f in ("icon_80.png", "icon_144.png", "icon_48.png", "banner_720x320.png"):
+for f in ("icon_80.png", "icon_144.png", "icon_48.png"):
     shutil.copy(os.path.join(HERE, "icon", f), REL)
-shutil.copytree(os.path.join(HERE, "screenshots_emery"), os.path.join(REL, "screenshots_emery"))
+# one asset collection per platform: screenshots and banner
+for platform in info["targetPlatforms"]:
+    shots = os.path.join(HERE, "screenshots_" + platform)
+    banner = os.path.join(HERE, "icon", "banner_720x320_%s.png" % platform)
+    if not os.path.isdir(shots) or not os.path.exists(banner):
+        sys.exit(f"{platform}: screenshots or banner missing")
+    shutil.copytree(shots, os.path.join(REL, "screenshots_" + platform))
+    shutil.copy(banner, os.path.join(REL, "screenshots_" + platform, "banner_720x320.png"))
 for f in ("description_en.txt", "RELEASE_NOTES.md"):
     shutil.copy(os.path.join(HERE, f), REL)
 

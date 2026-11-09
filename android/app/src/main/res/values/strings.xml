@@ -56,6 +56,7 @@
     <string name="fb_vibe">Vibration</string>
     <string name="fb_both">Sound + vibration</string>
     <string name="s_feedback_hint">On the watch, Select or a tap on the bottom line switches it during a search.</string>
+    <string name="s_speaker_hint">Sound only on watches with a speaker (Pebble Time 2, Pebble 2 Duo). The others vibrate instead.</string>
     <string name="s_sound">Sound</string>
     <string name="s_sound_beep">Soft beep</string>
     <string name="s_sound_click">Geiger counter click</string>

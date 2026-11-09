@@ -55,6 +55,7 @@
     <string name="fb_vibe">Vibration</string>
     <string name="fb_both">Son + vibration</string>
     <string name="s_feedback_hint">Sur la montre, Select ou une touche sur la dernière ligne le change pendant la recherche.</string>
+    <string name="s_speaker_hint">Le son seulement sur les montres avec haut-parleur (Pebble Time 2, Pebble 2 Duo). Les autres vibrent à la place.</string>
     <string name="s_sound">Son</string>
     <string name="s_sound_beep">Bip doux</string>
     <string name="s_sound_click">Clic de compteur Geiger</string>

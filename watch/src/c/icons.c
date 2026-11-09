@@ -28,7 +28,8 @@ static void fill(GContext *ctx, int x, int y, int w, int h, int radius) {
 
 void draw_category_icon(GContext *ctx, GRect r, uint8_t cat, GColor bg) {
   const int x = r.origin.x, y = r.origin.y;
-  const GColor c = category_color(cat);
+  // black & white: the opposite of the background
+  const GColor c = PBL_IF_COLOR_ELSE(category_color(cat), gcolor_equal(bg, GColorWhite) ? GColorBlack : GColorWhite);
   graphics_context_set_fill_color(ctx, c);
   graphics_context_set_stroke_color(ctx, c);
   graphics_context_set_stroke_width(ctx, 1);

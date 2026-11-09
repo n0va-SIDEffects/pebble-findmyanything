@@ -5,11 +5,18 @@ die **Pebble-Watchapp zeigt an** und führt dich mit Farbe, Ton und Vibration zu
 (wärmer/kälter). Das Handy kann dabei in der Tasche bleiben.
 
 ```
-Uhr (Watchapp, emery)  ⇄  Pebble-App  ⇄  Find-My-Anything-App (Android, sucht per BLE + Classic)
+Uhr (Watchapp)  ⇄  Pebble-App  ⇄  Find-My-Anything-App (Android, sucht per BLE + Classic)
                  AppMessage        PebbleKit Android 2
 ```
 
 Farben überall als Ampel: **grün = direkt daneben**, gelb/orange = mittel, **rot = weit weg**.
+
+Uhren: Pebble Time 2 (`emery`), Time und Time Steel (`basalt`), Time Round (`chalk`),
+Round 2 (`gabbro`), Pebble 2 (`diorite`) und 2 Duo (`flint`). Runde Displays zeigen das
+Signal als Ring statt am Rahmen, Schwarz-Weiss-Displays ohne Farben (Band, Balken und
+Wörter tragen die Information). Ton nur mit Lautsprecher (Time 2, 2 Duo), sonst Vibration;
+Touch auf Time 2 und Round 2. Pebble Classic und Steel (`aplite`, 24 KB) haben zu wenig
+Speicher. Getestet auf der Time 2, die anderen Uhren im Emulator.
 
 Sprachen: Englisch, Deutsch, Französisch, Italienisch, Spanisch, Portugiesisch (Brasilien),
 Niederländisch – Handy-App und Uhr, wählbar in den Einstellungen (Standard: Handy-Sprache).
@@ -45,7 +52,7 @@ wahlweise 0–100 oder dBm.
 
 | Taste | Touch | Wirkung |
 |---|---|---|
-| Select | Tippen auf die unterste Zeile | Signal: stumm → Ton → Vibration → Ton + Vibration |
+| Select | Tippen auf die unterste Zeile | Signal: stumm → Ton → Vibration → Ton + Vibration (ohne Lautsprecher: stumm ↔ Vibration) |
 | Hoch | Tippen auf die Zahl | Bestwert zurücksetzen |
 | Runter | Tippen oben | Licht dauerhaft an/aus |
 | Zurück | nach rechts wischen | zur Liste |
@@ -125,6 +132,10 @@ beim Bauen, `versionCode` ist die Build-Nummer von GitHub Actions).
 3. `( set -a; . ~/.hermes/.env; set +a; python3 tools/release.py )` – wartet auf den Build,
    legt den Release `v<Version>` an und lädt APK (Release-Schlüssel) und PBW hoch.
    `--prerelease` für Vorabversionen. Nochmals ausführen ersetzt Text und Dateien.
+4. Pebble-Appstore: `python3 store/make_screenshots.py` (Emulator, alle Uhren, ~25 min;
+   die App läuft dafür mit `FMA_DEMO 2` selbst durch die Bildschirme),
+   `python3 store/banner/make_banner.py`, `python3 store/make_package.py`; die Schritte im
+   Portal stehen in `store/VEROEFFENTLICHEN.md`.
 
 Protokoll zwischen Uhr und Handy: [docs/protokoll.md](docs/protokoll.md).
 
@@ -139,3 +150,6 @@ Mitgeliefert bzw. verwendet:
 - Hersteller-, Dienst- und Gerätetyp-Nummern aus den *Assigned Numbers* der Bluetooth SIG
   ([bluetooth-SIG/public](https://bitbucket.org/bluetooth-SIG/public)), in
   `android/app/src/main/assets/` aufbereitet.
+
+Von Anfang bis in den Store mit KI programmiert (Vibe Coding). Nur so konnte die App neben
+einem Vollzeitjob entstehen.

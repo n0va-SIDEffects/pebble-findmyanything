@@ -62,10 +62,21 @@ Pebble.addEventListener('appmessage', function (e) {
   if (s.stamp >= load().stamp) { store(s); }
 });
 
+// Only the Time 2 (emery) and the Pebble 2 Duo (flint) have a speaker
+function hasSpeaker() {
+  try {
+    var info = Pebble.getActiveWatchInfo ? Pebble.getActiveWatchInfo() : null;
+    var p = info && info.platform;
+    return !p || p === 'emery' || p === 'flint';
+  } catch (e) {
+    return true;
+  }
+}
+
 Pebble.addEventListener('showConfiguration', function () {
   var s = load();
   clay.setSettings(S.toClay(s));
-  clay.meta.userData = { i18n: I18N, lang: S.toClay(s).lang };
+  clay.meta.userData = { i18n: I18N, lang: S.toClay(s).lang, speaker: hasSpeaker() };
   Pebble.openURL(clay.generateUrl());
 });
 

@@ -101,13 +101,13 @@ void audio_pump_stop(void) {
   if (!s_running) return;
   s_running = false;
   if (s_timer) { app_timer_cancel(s_timer); s_timer = NULL; }
-  speaker_stream_close();
+  (void)speaker_stream_close();  // (void): a macro "(0)" on watches without a speaker
 }
 
 bool audio_pump_is_running(void) { return s_running; }
 
 void audio_pump_set_volume(uint8_t volume) {
-  if (s_running) speaker_set_volume(volume);
+  if (s_running) (void)speaker_set_volume(volume);
 }
 
 uint16_t audio_pump_underruns(void) { return s_underruns; }

@@ -55,6 +55,7 @@
     <string name="fb_vibe">Vibrazione</string>
     <string name="fb_both">Suono + vibrazione</string>
     <string name="s_feedback_hint">Sull\'orologio lo cambi durante la ricerca con Select o toccando l\'ultima riga.</string>
+    <string name="s_speaker_hint">Suono solo sugli orologi con altoparlante (Pebble Time 2, Pebble 2 Duo). Gli altri vibrano al suo posto.</string>
     <string name="s_sound">Suono</string>
     <string name="s_sound_beep">Bip morbido</string>
     <string name="s_sound_click">Clic del contatore Geiger</string>

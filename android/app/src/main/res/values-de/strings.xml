@@ -55,6 +55,7 @@
     <string name="fb_vibe">Vibration</string>
     <string name="fb_both">Ton + Vibration</string>
     <string name="s_feedback_hint">Auf der Uhr wechselst du es in der Suche mit Select oder einem Tipp auf die unterste Zeile.</string>
+    <string name="s_speaker_hint">Ton nur auf Uhren mit Lautsprecher (Pebble Time 2, Pebble 2 Duo). Die anderen vibrieren stattdessen.</string>
     <string name="s_sound">Klang</string>
     <string name="s_sound_beep">Weicher Piepton</string>
     <string name="s_sound_click">Geigerzähler-Klick</string>

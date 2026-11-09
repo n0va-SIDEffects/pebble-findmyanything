@@ -9,7 +9,8 @@
 //    table gets the translation (text only, so "&" and markup are safe).
 // 2. Support button: Buy Me a Coffee yellow (#FFDD00, black text) instead of
 //    Clay's orange, which would look like a second Save button.
-// 3. Download button for the Android app: the GitHub page of the newest release
+// 3. Watches without a speaker: no sound options (the watch vibrates instead).
+// 4. Download button for the Android app: the GitHub page of the newest release
 //    (APK and install guide), in the green of "very close" on the watch.
 module.exports = function (minified) {
   var clayConfig = this;
@@ -86,6 +87,22 @@ module.exports = function (minified) {
       style.appendChild(document.createTextNode(BMC_CSS));
       document.head.appendChild(style);
     }
+    if (data.speaker === false) {
+      var fb = clayConfig.getItemByMessageKey('feedback');
+      if (fb) {
+        var v = fb.get();
+        var sel = fb.$manipulatorTarget[0];
+        for (var i = sel.options.length - 1; i >= 0; i--) {
+          if (sel.options[i].value === '1' || sel.options[i].value === '3') { sel.remove(i); }
+        }
+        fb.set(v === '1' || v === '3' ? '2' : v);
+      }
+      ['sound', 'volume'].forEach(function (key) {
+        var item = clayConfig.getItemByMessageKey(key);
+        if (item) { item.hide(); }
+      });
+    }
+
     var donate = clayConfig.getItemById('donate');
     if (donate) {
       donate.on('click', function () { openLink(DONATE_URL); });

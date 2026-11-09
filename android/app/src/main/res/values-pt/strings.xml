@@ -55,6 +55,7 @@
     <string name="fb_vibe">Vibração</string>
     <string name="fb_both">Som + vibração</string>
     <string name="s_feedback_hint">No relógio, Select ou um toque na última linha muda isso durante a busca.</string>
+    <string name="s_speaker_hint">Som apenas em relógios com alto-falante (Pebble Time 2, Pebble 2 Duo). Os outros vibram no lugar.</string>
     <string name="s_sound">Som</string>
     <string name="s_sound_beep">Bipe suave</string>
     <string name="s_sound_click">Clique de contador Geiger</string>

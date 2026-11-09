@@ -7,6 +7,19 @@
 #include "i18n.h"
 #include "beeper.h"
 
+// Colour or black & white (Pebble 2, Pebble 2 Duo): COL(colour, black & white)
+#if defined(PBL_COLOR)
+#define COL(hex, bw) GColorFromHEX(hex)
+#else
+#define COL(hex, bw) (bw)
+#endif
+// Only the Time 2 and the Pebble 2 Duo have a speaker; the others vibrate instead
+#if defined(PBL_SPEAKER)
+#define HAS_SPEAKER 1
+#else
+#define HAS_SPEAKER 0
+#endif
+
 // 1 = fake data for emulator screenshots, no phone needed
 #ifndef FMA_DEMO
 #define FMA_DEMO 0
@@ -28,7 +41,7 @@ enum { TYPE_LIST = 1, TYPE_SEARCH = 2 };
 #define KEEPALIVE_MS 60000
 #define IDLE_BEFORE_SORT_MS 5000   // no reordering right after a button press or touch
 #define SORT_HYSTERESIS 6          // dB a device must be stronger to move up
-#define HEADER_H 24
+#define HEADER_H PBL_IF_ROUND_ELSE(32, 24)
 #define ROW_H 46
 
 // ---- Settings (19 bytes, version 2, docs/protokoll.md) ----
@@ -145,12 +158,16 @@ static int signal_pct(int rssi) { return clampi((rssi + 100) * 100 / 60, 0, 100)
 
 // Traffic light: green = right next to it, red = far away
 static GColor heat_color(int rssi) {
+#if defined(PBL_COLOR)
   if (rssi >= -50) return GColorFromHEX(0x00FF00);
   if (rssi >= -60) return GColorFromHEX(0xAAFF00);
   if (rssi >= -70) return GColorFromHEX(0xFFFF00);
   if (rssi >= -80) return GColorFromHEX(0xFFAA00);
   if (rssi >= -90) return GColorFromHEX(0xFF5500);
   return GColorFromHEX(0xFF0000);
+#else
+  return GColorWhite;  // black & white: the band length, the bars and the word carry it
+#endif
 }
 
 static const char *proximity(int rssi) {
@@ -164,6 +181,13 @@ static const char *proximity(int rssi) {
 
 static const char *filter_name(int f) { return tr((StrId)(S_F_ALL + clampi(f, 0, FILTER_COUNT - 1))); }
 static const char *feedback_name(int f) { return tr((StrId)(S_FB_OFF + (f & 3))); }
+
+// Without a speaker "sound" and "sound + vibration" become vibration
+static int fix_feedback(int f) {
+  f &= 3;
+  if (!HAS_SPEAKER && (f & 1)) f = 2;
+  return f;
+}
 
 static int bars_for(int rssi) {
   if (rssi >= -55) return 4;
@@ -456,6 +480,7 @@ static void finish_list(int total) {
   commit_list(total);
 }
 
+#if defined(PBL_TOUCH)  // only a finger on the list holds a snapshot back
 static void deferred_commit(void *ctx) {
   if (!s_commit_pending || !s_build_ready) return;
   if (list_touch_busy()) {
@@ -465,6 +490,7 @@ static void deferred_commit(void *ctx) {
   s_commit_pending = false;
   commit_list(s_pending_total);
 }
+#endif
 
 static void handle_list(DictionaryIterator *it) {
   int seq = get_int(it, MESSAGE_KEY_Seq, 0);
@@ -562,7 +588,7 @@ static void apply_settings(const uint8_t *p, uint16_t len, bool from_phone) {
   if (old.volume != n.volume && beeper_running()) beeper_set_volume(n.volume);
   sound_update();
   if (old.start_filter != n.start_filter) s_filter = n.start_filter;
-  if (old.feedback != n.feedback) s_feedback = n.feedback;
+  if (old.feedback != n.feedback) s_feedback = fix_feedback(n.feedback);
   if (old.sort != n.sort && s_order_count) sort_order(false);
   rebuild_view();
   refresh_list(selected_id());
@@ -595,14 +621,22 @@ static void inbox_dropped(AppMessageResult reason, void *ctx) {
 
 // ---- List window ----
 static uint16_t menu_rows(MenuLayer *ml, uint16_t section, void *ctx) { return s_view_count; }
-static int16_t menu_row_height(MenuLayer *ml, MenuIndex *idx, void *ctx) { return ROW_H; }
+// Round screens: the focused row in the middle is tall, the others show only the name
+static int16_t menu_row_height(MenuLayer *ml, MenuIndex *idx, void *ctx) {
+#if defined(PBL_ROUND)
+  bool big = PBL_DISPLAY_WIDTH > 200;
+  return menu_layer_is_index_selected(ml, idx) ? (big ? 64 : 58) : (big ? 40 : 34);
+#else
+  return ROW_H;
+#endif
+}
 static int16_t menu_header_height(MenuLayer *ml, uint16_t section, void *ctx) { return HEADER_H; }
 
 static void draw_phone_badge(GContext *ctx, GRect r) {
-  GColor c = GColorFromHEX(0x55FF55);
-  if (!s_got_data) c = GColorFromHEX(0x555555);
-  else if (s_status & (ST_BT_OFF | ST_NO_PERMISSION | ST_SCAN_ERROR | ST_LOCATION_OFF)) c = GColorFromHEX(0xFF5555);
-  else if (s_status & ST_SCREEN_OFF) c = GColorFromHEX(0xFFAA00);
+  GColor c = COL(0x55FF55, GColorWhite);
+  if (!s_got_data) c = COL(0x555555, GColorWhite);
+  else if (s_status & (ST_BT_OFF | ST_NO_PERMISSION | ST_SCAN_ERROR | ST_LOCATION_OFF)) c = COL(0xFF5555, GColorWhite);
+  else if (s_status & ST_SCREEN_OFF) c = COL(0xFFAA00, GColorWhite);
   graphics_context_set_fill_color(ctx, c);
   graphics_fill_rect(ctx, r, 2, GCornersAll);
   graphics_context_set_fill_color(ctx, GColorBlack);
@@ -611,7 +645,7 @@ static void draw_phone_badge(GContext *ctx, GRect r) {
 
 static void menu_draw_header(GContext *ctx, const Layer *cell, uint16_t section, void *data) {
   GRect b = layer_get_bounds(cell);
-  graphics_context_set_fill_color(ctx, GColorFromHEX(0x000055));
+  graphics_context_set_fill_color(ctx, COL(0x000055, GColorBlack));
   graphics_fill_rect(ctx, b, 0, GCornerNone);
   char buf[48];
   if (s_filter == 0) {
@@ -621,22 +655,43 @@ static void menu_draw_header(GContext *ctx, const Layer *cell, uint16_t section,
     snprintf(buf, sizeof(buf), "%d/%d · %s", s_view_count, s_total, filter_name(s_filter));
   }
   graphics_context_set_text_color(ctx, GColorWhite);
+#if defined(PBL_ROUND)
+  int side = b.size.w / 5;  // centred, the corners are outside the circle
+  graphics_draw_text(ctx, buf, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD), GRect(side, 5, b.size.w - 2 * side, 22),
+                     GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+  int bx = b.size.w - side + 4, by = 8;
+#else
   graphics_draw_text(ctx, buf, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD), GRect(8, -1, b.size.w - 36, 22),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-  if (s_status & ST_CLASSIC_ACTIVE) {
-    graphics_context_set_fill_color(ctx, GColorFromHEX(0x55AAFF));
-    graphics_fill_circle(ctx, GPoint(b.size.w - 26, 12), 3);
+  int bx = b.size.w - 17, by = 3;
+#endif
+  // the classic-scan dot only where there is room for it next to the text
+  if ((s_status & ST_CLASSIC_ACTIVE) && PBL_IF_ROUND_ELSE(false, true)) {
+    graphics_context_set_fill_color(ctx, COL(0x55AAFF, GColorWhite));
+    graphics_fill_circle(ctx, GPoint(bx - 9, by + 9), 3);
   }
-  draw_phone_badge(ctx, GRect(b.size.w - 17, 3, 9, 17));
+  draw_phone_badge(ctx, GRect(bx, by, 9, 17));
+#if defined(PBL_BW)
+  graphics_context_set_stroke_color(ctx, GColorWhite);
+  graphics_draw_line(ctx, GPoint(0, b.size.h - 1), GPoint(b.size.w, b.size.h - 1));
+#endif
 }
 
-static void draw_bars(GContext *ctx, int x, int y, int rssi, bool stale) {
+// Four bars; fg is the text colour of the row (used in black & white)
+static void draw_bars(GContext *ctx, int x, int y, int rssi, bool stale, GColor fg) {
   int n = bars_for(rssi);
-  GColor on = stale ? GColorFromHEX(0x555555) : heat_color(rssi);
   for (int i = 0; i < 4; i++) {
     int h = 4 + i * 3;
+    GRect r = GRect(x + i * 5, y + 13 - h, 3, h);
+#if defined(PBL_COLOR)
+    GColor on = stale ? GColorFromHEX(0x555555) : heat_color(rssi);
     graphics_context_set_fill_color(ctx, i < n ? on : GColorFromHEX(0x555555));
-    graphics_fill_rect(ctx, GRect(x + i * 5, y + 13 - h, 3, h), 0, GCornerNone);
+    graphics_fill_rect(ctx, r, 0, GCornerNone);
+#else
+    // black & white: a full bar = signal, only its foot = none
+    graphics_context_set_fill_color(ctx, fg);
+    graphics_fill_rect(ctx, (i < n && !stale) ? r : GRect(r.origin.x, y + 12, 3, 1), 0, GCornerNone);
+#endif
   }
 }
 
@@ -646,30 +701,55 @@ static void menu_draw_row(GContext *ctx, const Layer *cell, MenuIndex *idx, void
   GRect b = layer_get_bounds(cell);
   bool hl = menu_cell_layer_is_highlighted(cell);
   bool stale = d->age > 15;
-  GColor bg = hl ? GColorFromHEX(0x0055AA) : GColorBlack;
+  GColor bg = hl ? COL(0x0055AA, GColorWhite) : GColorBlack;
+  GColor fg = hl ? COL(0xFFFFFF, GColorBlack) : GColorWhite;
+  GColor main_c = stale ? COL(0xAAAAAA, fg) : fg;
+  GColor dim = hl ? COL(0xAAFFFF, GColorBlack) : COL(0xAAAAAA, GColorWhite);
+  GFont f_name = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
+  GFont f_small = fonts_get_system_font(FONT_KEY_GOTHIC_14);
 
-  draw_category_icon(ctx, GRect(6, 13, 20, 20), d->cat, bg);
-
-  int right = 50;
-  graphics_context_set_text_color(ctx, stale ? GColorFromHEX(0xAAAAAA) : GColorWhite);
-  graphics_draw_text(ctx, d->name, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
-                     GRect(32, 1, b.size.w - 32 - right, 22), GTextOverflowModeTrailingEllipsis,
-                     GTextAlignmentLeft, NULL);
   char det[48];
   if (stale) snprintf(det, sizeof(det), tr(S_AGO), d->age, d->detail);
   else if (d->flags & FL_BONDED) snprintf(det, sizeof(det), tr(S_BONDED), d->detail);
   else snprintf(det, sizeof(det), "%s", d->detail);
-  graphics_context_set_text_color(ctx, hl ? GColorFromHEX(0xAAFFFF) : GColorFromHEX(0xAAAAAA));
-  graphics_draw_text(ctx, det, fonts_get_system_font(FONT_KEY_GOTHIC_14),
-                     GRect(32, 23, b.size.w - 32 - right + 8, 18), GTextOverflowModeTrailingEllipsis,
-                     GTextAlignmentLeft, NULL);
-
-  draw_bars(ctx, b.size.w - 26, 6, d->rssi, stale);
   char num[12];
   snprintf(num, sizeof(num), "%d", d->rssi);
-  graphics_context_set_text_color(ctx, stale ? GColorFromHEX(0xAAAAAA) : GColorWhite);
-  graphics_draw_text(ctx, num, fonts_get_system_font(FONT_KEY_GOTHIC_14), GRect(b.size.w - 46, 22, 42, 18),
+
+#if defined(PBL_ROUND)
+  int side = b.size.w / 8;  // the corners of a cell are outside the circle
+  if (!hl) {
+    graphics_context_set_text_color(ctx, main_c);
+    graphics_draw_text(ctx, d->name, f_name, GRect(side + 8, (b.size.h - 24) / 2, b.size.w - 2 * side - 16, 22),
+                       GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+    return;
+  }
+  draw_category_icon(ctx, GRect(side - 6, (b.size.h - 20) / 2, 20, 20), d->cat, bg);
+  int tx = side + 18, tw = b.size.w - 2 * tx;
+  graphics_context_set_text_color(ctx, main_c);
+  graphics_draw_text(ctx, d->name, f_name, GRect(tx, 4, tw, 22), GTextOverflowModeTrailingEllipsis,
+                     GTextAlignmentCenter, NULL);
+  graphics_context_set_text_color(ctx, dim);
+  graphics_draw_text(ctx, det, f_small, GRect(tx, 24, tw, 18), GTextOverflowModeTrailingEllipsis,
+                     GTextAlignmentCenter, NULL);
+  draw_bars(ctx, b.size.w / 2 - 22, b.size.h - 19, d->rssi, stale, fg);
+  graphics_context_set_text_color(ctx, main_c);
+  graphics_draw_text(ctx, num, f_small, GRect(b.size.w / 2 + 2, b.size.h - 21, 40, 18), GTextOverflowModeFill,
+                     GTextAlignmentLeft, NULL);
+#else
+  bool small = b.size.w < 180;  // 144 wide: narrower margins and number column
+  int ix = small ? 4 : 6, tx = small ? 28 : 32, right = small ? 30 : 50;
+  draw_category_icon(ctx, GRect(ix, 13, 20, 20), d->cat, bg);
+  graphics_context_set_text_color(ctx, main_c);
+  graphics_draw_text(ctx, d->name, f_name, GRect(tx, 1, b.size.w - tx - right, 22), GTextOverflowModeTrailingEllipsis,
+                     GTextAlignmentLeft, NULL);
+  graphics_context_set_text_color(ctx, dim);
+  graphics_draw_text(ctx, det, f_small, GRect(tx, 23, b.size.w - tx - right + (small ? 0 : 8), 18),
+                     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  draw_bars(ctx, b.size.w - (small ? 24 : 26), 6, d->rssi, stale, fg);
+  graphics_context_set_text_color(ctx, main_c);
+  graphics_draw_text(ctx, num, f_small, GRect(b.size.w - (small ? 34 : 46), 22, small ? 30 : 42, 18),
                      GTextOverflowModeFill, GTextAlignmentRight, NULL);
+#endif
 }
 
 static void open_search(const Device *d);
@@ -701,22 +781,46 @@ static void menu_selection_changed(MenuLayer *ml, MenuIndex new_index, MenuIndex
   if (!s_touch.down && now_ms() - s_touch_up_ms > 400) s_nav_by_touch = false;
 }
 
+// Round screens: the text flows along the edge of the circle
+static GTextAttributes *text_flow(void) {
+#if defined(PBL_ROUND)
+  static GTextAttributes *s_flow;
+  if (!s_flow) {
+    s_flow = graphics_text_attributes_create();
+    graphics_text_attributes_enable_screen_text_flow(s_flow, 6);
+  }
+  return s_flow;
+#else
+  return NULL;
+#endif
+}
+
 static void draw_multiline(GContext *ctx, const char *text, GRect r, const char *font, GColor color) {
   graphics_context_set_text_color(ctx, color);
   graphics_draw_text(ctx, text, fonts_get_system_font(font), r, GTextOverflowModeWordWrap,
-                     GTextAlignmentCenter, NULL);
+                     GTextAlignmentCenter, text_flow());
 }
 
 static void empty_update(Layer *layer, GContext *ctx) {
   GRect b = layer_get_bounds(layer);
   graphics_context_set_fill_color(ctx, GColorBlack);
   graphics_fill_rect(ctx, b, 0, GCornerNone);
-  GPoint c = GPoint(b.size.w / 2, 44);
-  graphics_context_set_stroke_color(ctx, GColorFromHEX(0xFFAA00));
-  graphics_context_set_fill_color(ctx, GColorFromHEX(0xFFAA00));
+  // Time 2 as tested; smaller and round screens get the same picture, smaller
+  bool big = b.size.w >= 200;
+#if defined(PBL_ROUND)
+  int cy = big ? 62 : 44, ty0 = big ? 102 : 72, inset = big ? 30 : 20;
+#else
+  int cy = big ? 44 : 32, ty0 = big ? 84 : 60, inset = big ? 8 : 4;
+#endif
+  int step = big ? 12 : 9;
+  GPoint c = GPoint(b.size.w / 2, cy);
+  GColor amber = COL(0xFFAA00, GColorWhite);
+  graphics_context_set_stroke_color(ctx, amber);
+  graphics_context_set_fill_color(ctx, amber);
   graphics_context_set_stroke_width(ctx, 3);
-  graphics_fill_circle(ctx, c, 5);
-  for (int r = 14; r <= 38; r += 12) {
+  graphics_fill_circle(ctx, c, big ? 5 : 4);
+  for (int k = 1; k <= 3; k++) {
+    int r = 2 + k * step;  // Time 2: 14, 26, 38
     graphics_draw_arc(ctx, GRect(c.x - r, c.y - r, 2 * r, 2 * r), GOvalScaleModeFitCircle,
                       DEG_TO_TRIGANGLE(-45), DEG_TO_TRIGANGLE(45));
   }
@@ -741,12 +845,14 @@ static void empty_update(Layer *layer, GContext *ctx) {
     text = tr(S_KEEP_SEARCHING);
   }
   // The title may wrap to two lines: measure it and put the text below
-  GFont tf = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-  GRect tr_box = GRect(8, 84, b.size.w - 16, 60);
-  GSize ts = graphics_text_layout_get_content_size(title, tf, tr_box, GTextOverflowModeWordWrap, GTextAlignmentCenter);
-  draw_multiline(ctx, title, tr_box, FONT_KEY_GOTHIC_24_BOLD, GColorWhite);
-  int ty = 84 + ts.h + 4;
-  draw_multiline(ctx, text, GRect(12, ty, b.size.w - 24, b.size.h - ty), FONT_KEY_GOTHIC_18, GColorFromHEX(0xAAAAAA));
+  GFont tf = fonts_get_system_font(big ? FONT_KEY_GOTHIC_24_BOLD : FONT_KEY_GOTHIC_18_BOLD);
+  GRect tr_box = GRect(inset, ty0, b.size.w - 2 * inset, 60);
+  GSize ts = graphics_text_layout_get_content_size_with_attributes(title, tf, tr_box, GTextOverflowModeWordWrap,
+                                                                   GTextAlignmentCenter, text_flow());
+  draw_multiline(ctx, title, tr_box, big ? FONT_KEY_GOTHIC_24_BOLD : FONT_KEY_GOTHIC_18_BOLD, GColorWhite);
+  int ty = ty0 + ts.h + 4;
+  draw_multiline(ctx, text, GRect(inset + 4, ty, b.size.w - 2 * inset - 8, b.size.h - ty),
+                 big ? FONT_KEY_GOTHIC_18 : FONT_KEY_GOTHIC_14, COL(0xAAAAAA, GColorWhite));
 }
 
 static void list_load(Window *w) {
@@ -764,11 +870,12 @@ static void list_load(Window *w) {
     .selection_changed = menu_selection_changed,
   });
   menu_layer_set_normal_colors(s_menu, GColorBlack, GColorWhite);
-  menu_layer_set_highlight_colors(s_menu, GColorFromHEX(0x0055AA), GColorWhite);
+  menu_layer_set_highlight_colors(s_menu, COL(0x0055AA, GColorWhite), COL(0xFFFFFF, GColorBlack));
   menu_layer_set_click_config_onto_window(s_menu, w);
   layer_add_child(root, menu_layer_get_layer(s_menu));
 
-  s_empty_layer = layer_create(GRect(0, HEADER_H, b.size.w, b.size.h - HEADER_H));
+  // Round: full screen (the header would sit in the narrow top of the circle)
+  s_empty_layer = layer_create(PBL_IF_ROUND_ELSE(b, GRect(0, HEADER_H, b.size.w, b.size.h - HEADER_H)));
   layer_set_update_proc(s_empty_layer, empty_update);
   layer_add_child(root, s_empty_layer);
   layer_set_hidden(s_empty_layer, s_view_count > 0);
@@ -782,6 +889,7 @@ static void list_unload(Window *w) {
 }
 
 // ---- Search window ----
+#if !defined(PBL_ROUND)
 // Progress band along the screen edge, clockwise from top centre. permille 0..1000.
 static void border_band(GContext *ctx, GRect b, int th, int permille, GColor color) {
   int w = b.size.w, h = b.size.h, x0 = b.origin.x, y0 = b.origin.y;
@@ -816,71 +924,146 @@ static void border_marker(GContext *ctx, GRect b, int th, int permille, GColor c
   graphics_context_set_fill_color(ctx, color);
   graphics_fill_rect(ctx, m, 0, GCornerNone);
 }
+#endif
+
+// Edge band: along the frame on rectangular screens, a ring on round ones
+static void edge_band(GContext *ctx, GRect b, int th, int permille, GColor color) {
+#if defined(PBL_ROUND)
+  int32_t end = TRIG_MAX_ANGLE * clampi(permille, 0, 1000) / 1000;
+  if (end <= 0) return;
+  graphics_context_set_fill_color(ctx, color);
+  graphics_fill_radial(ctx, b, GOvalScaleModeFitCircle, th, 0, end);
+#else
+  border_band(ctx, b, th, permille, color);
+#endif
+}
+
+static void edge_marker(GContext *ctx, GRect b, int th, int permille, GColor color) {
+#if defined(PBL_ROUND)
+  int32_t half = TRIG_MAX_ANGLE / 120;  // 3 degrees wide
+  int32_t a = TRIG_MAX_ANGLE * clampi(permille, 0, 1000) / 1000;
+  if (a < half) a = half;
+  graphics_context_set_fill_color(ctx, color);
+  graphics_fill_radial(ctx, b, GOvalScaleModeFitCircle, th + 4, a - half, a + half);
+#else
+  border_marker(ctx, b, th, permille, color);
+#endif
+}
+
+// The empty track: dark blue in colour, a thin line in black & white
+static void edge_track(GContext *ctx, GRect b, int th) {
+#if defined(PBL_COLOR)
+  edge_band(ctx, b, th, 1000, GColorFromHEX(0x000055));
+#else
+  graphics_context_set_stroke_color(ctx, GColorWhite);
+  graphics_context_set_stroke_width(ctx, 1);
+  graphics_draw_rect(ctx, grect_inset(b, GEdgeInsets(th / 2)));
+#endif
+}
 
 static void draw_trend(GContext *ctx, GPoint c, int trend10) {
   if (trend10 > 10) {
     GPathInfo info = {3, (GPoint[]){{c.x - 9, c.y + 6}, {c.x + 9, c.y + 6}, {c.x, c.y - 8}}};
     GPath *p = gpath_create(&info);
-    graphics_context_set_fill_color(ctx, GColorFromHEX(0x00FF00));
+    graphics_context_set_fill_color(ctx, COL(0x00FF00, GColorWhite));
     gpath_draw_filled(ctx, p);
     gpath_destroy(p);
   } else if (trend10 < -10) {
     GPathInfo info = {3, (GPoint[]){{c.x - 9, c.y - 6}, {c.x + 9, c.y - 6}, {c.x, c.y + 8}}};
     GPath *p = gpath_create(&info);
-    graphics_context_set_fill_color(ctx, GColorFromHEX(0xFF0000));
+    graphics_context_set_fill_color(ctx, COL(0xFF0000, GColorWhite));
     gpath_draw_filled(ctx, p);
     gpath_destroy(p);
   }
 }
 
 // Big value: 0..100 or dBm. LECO has no minus glyph, so the minus is drawn.
-static void draw_big_value(GContext *ctx, GRect b, bool lost, GColor color) {
+static void draw_big_value(GContext *ctx, GRect b, int y, bool lost, GColor color) {
   GFont font = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
   char num[12];
   bool dbm = s_cfg.big_number == BIG_DBM;
   if (lost) snprintf(num, sizeof(num), "--");
   else snprintf(num, sizeof(num), "%d", dbm ? iabs(s_search.rssi) : signal_pct(s_search.rssi));
-  GRect box = GRect(0, 56, b.size.w, 50);
+  GRect box = GRect(0, y, b.size.w, 50);
   GSize sz = graphics_text_layout_get_content_size(num, font, box, GTextOverflowModeFill, GTextAlignmentLeft);
   int minus_w = (dbm && !lost) ? 16 : 0;
   int x = (b.size.w - sz.w - minus_w - (minus_w ? 4 : 0)) / 2;
   graphics_context_set_text_color(ctx, color);
   if (minus_w) {
     graphics_context_set_fill_color(ctx, color);
-    graphics_fill_rect(ctx, GRect(x, 56 + 24, minus_w, 5), 0, GCornerNone);
+    graphics_fill_rect(ctx, GRect(x, y + 24, minus_w, 5), 0, GCornerNone);
     x += minus_w + 4;
   }
-  graphics_draw_text(ctx, num, font, GRect(x, 56, sz.w + 4, 50), GTextOverflowModeFill, GTextAlignmentLeft, NULL);
+  graphics_draw_text(ctx, num, font, GRect(x, y, sz.w + 4, 50), GTextOverflowModeFill, GTextAlignmentLeft, NULL);
+}
+
+// Positions per screen. The Time 2 layout is the one tested on the watch; the
+// others keep its order (header, big number, word, details, mode) in less room.
+typedef struct {
+  int th;                           // edge band
+  GRect icon, name, detail;
+  GTextAlignment head_align;
+  int num_y;                        // top of the big number
+  GPoint trend;
+  GRect word, info, info2, bottom;  // info2 with height 0: not shown
+  int tap_top, tap_mid;             // touch zones: light | best value | signal mode
+} SearchLayout;
+
+static SearchLayout search_layout(GRect b) {
+  int w = b.size.w, h = b.size.h;
+#if defined(PBL_ROUND)
+  (void)h;
+  if (w > 200) {  // Round 2, 260 x 260
+    return (SearchLayout){10, GRect(w / 2 - 10, 20, 20, 20), GRect(40, 40, w - 80, 22), GRect(35, 60, w - 70, 18),
+                          GTextAlignmentCenter, 80, GPoint(w - 52, 106), GRect(30, 126, w - 60, 30),
+                          GRect(35, 156, w - 70, 22), GRect(45, 178, w - 90, 18), GRect(65, 204, w - 130, 18),
+                          80, 178};
+  }
+  // Time Round, 180 x 180: no room for the second detail line
+  return (SearchLayout){8, GRect(w / 2 - 10, 13, 20, 20), GRect(28, 31, w - 56, 22), GRect(22, 50, w - 44, 18),
+                        GTextAlignmentCenter, 58, GPoint(w - 32, 84), GRect(18, 100, w - 36, 30),
+                        GRect(26, 126, w - 52, 22), GRect(0, 0, 0, 0), GRect(42, 148, w - 84, 18), 58, 126};
+#else
+  if (h >= 200) {  // Time 2, 200 x 228
+    return (SearchLayout){8, GRect(16, 16, 20, 20), GRect(42, 10, w - 56, 22), GRect(42, 30, w - 56, 18),
+                          GTextAlignmentLeft, 56, GPoint(w - 30, 84), GRect(14, 108, w - 28, 30),
+                          GRect(14, 140, w - 28, 22), GRect(14, 162, w - 28, 18), GRect(14, h - 36, w - 28, 18),
+                          56, 150};
+  }
+  // 144 x 168: Time, Time Steel, Pebble 2, Pebble 2 Duo
+  return (SearchLayout){6, GRect(10, 10, 20, 20), GRect(34, 4, w - 42, 22), GRect(34, 22, w - 42, 18),
+                        GTextAlignmentLeft, 34, GPoint(w - 18, 60), GRect(8, 76, w - 16, 30),
+                        GRect(8, 100, w - 16, 22), GRect(8, 119, w - 16, 18), GRect(8, h - 26, w - 16, 18), 34, 110};
+#endif
 }
 
 static void search_update(Layer *layer, GContext *ctx) {
   GRect b = layer_get_bounds(layer);
-  const int th = 8;
+  SearchLayout L = search_layout(b);
   int64_t now = now_ms();
   bool no_phone = now - s_search.last_msg > 6000;
   bool lost = !s_search.have || s_search.age10 > 100 || no_phone;
+  GColor grey = COL(0xAAAAAA, GColorWhite);
 
   graphics_context_set_fill_color(ctx, GColorBlack);
   graphics_fill_rect(ctx, b, 0, GCornerNone);
 
-  GColor heat = lost ? GColorFromHEX(0x555555) : heat_color(s_search.rssi);
-  border_band(ctx, b, th, 1000, GColorFromHEX(0x000055));
-  if (!lost) border_band(ctx, b, th, signal_pct(s_search.rssi) * 10, heat);
-  if (s_search.peak > -127) border_marker(ctx, b, th, signal_pct(s_search.peak) * 10, GColorWhite);
+  GColor heat = lost ? COL(0x555555, GColorWhite) : heat_color(s_search.rssi);
+  edge_track(ctx, b, L.th);
+  if (!lost) edge_band(ctx, b, L.th, signal_pct(s_search.rssi) * 10, heat);
+  if (s_search.peak > -127) edge_marker(ctx, b, L.th, signal_pct(s_search.peak) * 10, GColorWhite);
 
   // Header: icon, name, detail
-  draw_category_icon(ctx, GRect(16, 16, 20, 20), s_search.cat, GColorBlack);
+  draw_category_icon(ctx, L.icon, s_search.cat, GColorBlack);
   graphics_context_set_text_color(ctx, GColorWhite);
-  graphics_draw_text(ctx, s_search.name, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
-                     GRect(42, 10, b.size.w - 42 - 14, 22), GTextOverflowModeTrailingEllipsis,
-                     GTextAlignmentLeft, NULL);
-  graphics_context_set_text_color(ctx, GColorFromHEX(0xAAAAAA));
-  graphics_draw_text(ctx, s_search.detail, fonts_get_system_font(FONT_KEY_GOTHIC_14),
-                     GRect(42, 30, b.size.w - 42 - 14, 18), GTextOverflowModeTrailingEllipsis,
-                     GTextAlignmentLeft, NULL);
+  graphics_draw_text(ctx, s_search.name, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD), L.name,
+                     GTextOverflowModeTrailingEllipsis, L.head_align, NULL);
+  graphics_context_set_text_color(ctx, grey);
+  graphics_draw_text(ctx, s_search.detail, fonts_get_system_font(FONT_KEY_GOTHIC_14), L.detail,
+                     GTextOverflowModeTrailingEllipsis, L.head_align, NULL);
 
-  draw_big_value(ctx, b, lost, lost ? GColorFromHEX(0xAAAAAA) : heat);
-  if (!lost) draw_trend(ctx, GPoint(b.size.w - 30, 84), s_search.trend10);
+  draw_big_value(ctx, b, L.num_y, lost, lost ? grey : heat);
+  if (!lost) draw_trend(ctx, L.trend, s_search.trend10);
 
   char line[48];
   const char *word;
@@ -891,8 +1074,8 @@ static void search_update(Layer *layer, GContext *ctx) {
     snprintf(line, sizeof(line), tr(S_NO_SIGNAL_FOR), s_search.age10 / 10);
     word = line;
   } else word = proximity(s_search.rssi);
-  graphics_context_set_text_color(ctx, lost ? GColorFromHEX(0xAAAAAA) : heat);
-  graphics_draw_text(ctx, word, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD), GRect(14, 108, b.size.w - 28, 30),
+  graphics_context_set_text_color(ctx, lost ? grey : heat);
+  graphics_draw_text(ctx, word, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD), L.word,
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 
   // Details: the other unit, best value, distance, rate
@@ -906,31 +1089,33 @@ static void search_update(Layer *layer, GContext *ctx) {
     else snprintf(info, sizeof(info), "%d dBm%s%s", s_search.rssi, best[0] ? " · " : "", best);
   }
   graphics_context_set_text_color(ctx, GColorWhite);
-  graphics_draw_text(ctx, info, fonts_get_system_font(FONT_KEY_GOTHIC_18), GRect(14, 140, b.size.w - 28, 22),
+  graphics_draw_text(ctx, info, fonts_get_system_font(FONT_KEY_GOTHIC_18), L.info,
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 
-  char info2[72], rate[32];
-  info2[0] = '\0';
-  if (s_search.have && s_search.dist > 0) {
-    if (s_search.dist < 100) snprintf(info2, sizeof(info2), tr(S_DIST_CM), s_search.dist);
-    else snprintf(info2, sizeof(info2), tr(S_DIST_M), s_search.dist / 100, (s_search.dist % 100) / 10);
-    strncat(info2, " · ", sizeof(info2) - strlen(info2) - 1);
+  if (L.info2.size.h) {
+    char info2[72], rate[32];
+    info2[0] = '\0';
+    if (s_search.have && s_search.dist > 0) {
+      if (s_search.dist < 100) snprintf(info2, sizeof(info2), tr(S_DIST_CM), s_search.dist);
+      else snprintf(info2, sizeof(info2), tr(S_DIST_M), s_search.dist / 100, (s_search.dist % 100) / 10);
+      strncat(info2, " · ", sizeof(info2) - strlen(info2) - 1);
+    }
+    snprintf(rate, sizeof(rate), tr(S_RATE), s_search.rate10 / 10, s_search.rate10 % 10);
+    strncat(info2, rate, sizeof(info2) - strlen(info2) - 1);
+    graphics_context_set_text_color(ctx, grey);
+    graphics_draw_text(ctx, info2, fonts_get_system_font(FONT_KEY_GOTHIC_14), L.info2,
+                       GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
   }
-  snprintf(rate, sizeof(rate), tr(S_RATE), s_search.rate10 / 10, s_search.rate10 % 10);
-  strncat(info2, rate, sizeof(info2) - strlen(info2) - 1);
-  graphics_context_set_text_color(ctx, GColorFromHEX(0xAAAAAA));
-  graphics_draw_text(ctx, info2, fonts_get_system_font(FONT_KEY_GOTHIC_14), GRect(14, 162, b.size.w - 28, 18),
-                     GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 
   // Bottom line: toast, phone hint or signal mode
   const char *bottom;
-  GColor bc = GColorFromHEX(0xAAAAAA);
+  GColor bc = grey;
   if (now < s_toast_until) { bottom = s_toast; bc = GColorWhite; }
-  else if (s_status_text[0]) { bottom = s_status_text; bc = GColorFromHEX(0xFF5555); }
-  else if ((s_status & ST_SCREEN_OFF) && s_search.rate10 < 15) { bottom = tr(S_SCREEN_OFF); bc = GColorFromHEX(0xFFAA00); }
+  else if (s_status_text[0]) { bottom = s_status_text; bc = COL(0xFF5555, GColorWhite); }
+  else if ((s_status & ST_SCREEN_OFF) && s_search.rate10 < 15) { bottom = tr(S_SCREEN_OFF); bc = COL(0xFFAA00, GColorWhite); }
   else bottom = feedback_name(s_feedback);
   graphics_context_set_text_color(ctx, bc);
-  graphics_draw_text(ctx, bottom, fonts_get_system_font(FONT_KEY_GOTHIC_14), GRect(14, b.size.h - 36, b.size.w - 28, 18),
+  graphics_draw_text(ctx, bottom, fonts_get_system_font(FONT_KEY_GOTHIC_14), L.bottom,
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 }
 
@@ -960,8 +1145,10 @@ static void play_blip(int t /* 0..1000, 1000 = very close */) {
     beeper_trigger(s_cfg.sound == SOUND_STYLE_CLICK ? BEEPER_CLICK : BEEPER_BEEP, blip_freq(t));
     return;
   }
+#if defined(PBL_SPEAKER)
   // Fallback if the stream could not be opened (speaker busy)
   speaker_play_tone(blip_freq(t), 40, s_cfg.volume / 2, SpeakerWaveformSine);
+#endif
 }
 
 static void vibe_now(void *ctx) {
@@ -983,7 +1170,8 @@ static void beep_cb(void *ctx) {
   uint32_t next = 1000;
   int64_t now = now_ms();
   bool lost = !s_search.have || s_search.age10 > 50 || now - s_search.last_msg > 6000;
-  if (!lost && s_feedback) {
+  // demo: no sound or vibration (rapid vibration floods the emulator, screenshots fail)
+  if (!lost && s_feedback && !FMA_DEMO) {
     next = beep_interval(s_search.rssi);
     int t = clampi((s_search.rssi + 95) * 1000 / 50, 0, 1000);
     if (s_feedback & 1) play_blip(t);
@@ -999,13 +1187,15 @@ static void beep_cb(void *ctx) {
 // Repaint once a second (age counters, lost state)
 static void ui_tick(void *ctx) {
   s_ui_timer = app_timer_register(1000, ui_tick, NULL);
-  if (s_in_search && s_search_layer) layer_mark_dirty(s_search_layer);
-  else if (s_empty_layer && !layer_get_hidden(s_empty_layer)) layer_mark_dirty(s_empty_layer);
+  if (s_in_search && s_search_layer) {
+    if (FMA_DEMO != 2) layer_mark_dirty(s_search_layer);
+  } else if (s_empty_layer && !layer_get_hidden(s_empty_layer)) layer_mark_dirty(s_empty_layer);
 }
 
 // ---- Search actions (buttons and touch) ----
 static void cycle_feedback(void) {
-  s_feedback = (s_feedback + 1) & 3;
+  // without a speaker: silent <-> vibration
+  s_feedback = HAS_SPEAKER ? (s_feedback + 1) & 3 : (s_feedback ? 0 : 2);
   sound_update();
   if ((s_feedback & 1) && speaker_is_muted()) toast(tr(S_MUTED));
   else toast(feedback_name(s_feedback));
@@ -1078,7 +1268,8 @@ static void open_search(const Device *d) {
   s_beep_timer = app_timer_register(500, beep_cb, NULL);
 }
 
-// ---- Touch (Pebble Time 2) ----
+// ---- Touch (Pebble Time 2, Pebble Round 2) ----
+#if defined(PBL_TOUCH)
 // The list is a MenuLayer: with app_touch_navigation_enable() the system scrolls
 // it 1:1 under the finger (with coasting and a scrollbar), and a tap on a row
 // opens it. Own handling only where the system has nothing: the search screen
@@ -1094,8 +1285,10 @@ static void list_header_tap(int16_t x, int16_t y) {
 }
 
 static void search_tap(int16_t x, int16_t y) {
-  if (y < 56) toggle_light();
-  else if (y < 150) reset_peak();
+  if (!s_search_layer) return;
+  SearchLayout L = search_layout(layer_get_bounds(s_search_layer));
+  if (y < L.tap_top) toggle_light();
+  else if (y < L.tap_mid) reset_peak();
   else cycle_feedback();
 }
 
@@ -1140,6 +1333,8 @@ static void touch_handler(const TouchEvent *e, void *ctx) {
   }
 }
 
+#endif  // PBL_TOUCH
+
 // ---- Demo data for the emulator ----
 #if FMA_DEMO
 static void demo_fill(void) {
@@ -1168,8 +1363,31 @@ static void demo_fill(void) {
   commit_list(s_build_count + 3);
 }
 
+// FMA_DEMO 2: list, AirTag (near), Galaxy SmartTag (medium), Tile (far), filter, 25 s each
+#define DEMO_STEP_MS 25000
+static void demo_open(uint32_t id) {
+  if (s_in_search) window_stack_pop(false);
+  int i = live_index(id);
+  if (i >= 0) open_search(&s_live[i]);
+}
+
+static void demo_tour(void *ctx) {
+  static int step;
+  step++;
+  if (step == 1) demo_open(1);
+  else if (step == 2) demo_open(5);
+  else if (step == 3) demo_open(10);
+  else if (step == 4) {
+    if (s_in_search) window_stack_pop(false);
+    next_filter();
+  }
+  if (step < 4) app_timer_register(DEMO_STEP_MS, demo_tour, NULL);
+}
+
 static void demo_tick(void *ctx) {
-  app_timer_register(400, demo_tick, NULL);
+  // the tour redraws rarely: in the slow emulator every redraw of the search
+  // screen takes ~0.5 s and screenshots time out if it never rests
+  app_timer_register(FMA_DEMO == 2 ? 4000 : 400, demo_tick, NULL);
   if (!s_in_search) return;
   static int phase;
   phase++;
@@ -1202,7 +1420,7 @@ static void init(void) {
   }
   apply_lang();
   s_filter = s_cfg.start_filter;
-  s_feedback = s_cfg.feedback;
+  s_feedback = fix_feedback(s_cfg.feedback);
 
   app_message_register_inbox_received(inbox_received);
   app_message_register_inbox_dropped(inbox_dropped);
@@ -1218,12 +1436,15 @@ static void init(void) {
   window_stack_push(s_list_window, true);
   apply_light();
 
+#if defined(PBL_TOUCH)
   app_touch_navigation_enable(true);  // native touch scrolling for the list
   touch_service_subscribe(touch_handler, NULL);
+#endif
 
 #if FMA_DEMO
   demo_fill();
   app_timer_register(400, demo_tick, NULL);
+  if (FMA_DEMO == 2) app_timer_register(DEMO_STEP_MS, demo_tour, NULL);
 #endif
 
   s_settings_out = true;  // the phone app and the settings page learn what the watch has
@@ -1234,7 +1455,9 @@ static void init(void) {
 
 static void deinit(void) {
   beeper_stop();
+#if defined(PBL_TOUCH)
   touch_service_unsubscribe();
+#endif
   light_enable(false);
   if (s_keepalive_timer) app_timer_cancel(s_keepalive_timer);
   if (s_ui_timer) app_timer_cancel(s_ui_timer);

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Store banner (720 x 320) for Find My Anything, dark SIDEffect's series.
 
-    python3 store/banner/make_banner.py [--shot PNG]
+    python3 store/banner/make_banner.py                 # all platforms
+    python3 store/banner/make_banner.py --platform chalk
 
 Layout as Info Dial, Clarity, Stamina and Heart Rate FX: dark navy ground,
 title bold and white, subtitle in the accent colour, two light-grey lines, the
@@ -9,9 +10,11 @@ SIDEffect's logo bottom left (185 px wide, full opacity) and the watch on the
 right. Behind the watch, faint, the app's waves (lower left, upper right): green close to
 the watch, amber, red further out, as on the search screen and in the icon.
 
-The watch is `pebble_time_2` from the pebble-uhrmodelle skill (Mike's own
-photo) with the emulator screenshot in the display (uhr_bild.py), tilted 9
-degrees.
+One banner per platform (the store wants one per asset collection), each with
+its own watch from the pebble-uhrmodelle skill (WATCHES) and the platform's
+"very close" screenshot in the display (uhr_bild.py), tilted 9 degrees. emery
+keeps `pebble_time_2` like the other SIDEffect's banners. Output:
+store/icon/banner_720x320_<platform>.png (emery also as banner_720x320.png).
 """
 import argparse
 import os
@@ -26,7 +29,14 @@ SKILLS = os.path.expanduser("~/.hermes/skills/pebble")
 UHR_BILD = os.path.join(SKILLS, "pebble-uhrmodelle", "scripts", "uhr_bild.py")
 LOGO = os.path.join(SKILLS, "pebble-publish", "assets", "side_effects_logo.png")
 MONT = os.path.join(HERE, "fonts", "Montserrat.ttf")
-SHOT = os.path.join(ROOT, "store", "screenshots_emery", "1_very_close.png")
+WATCHES = {
+    "emery": "pebble_time_2",
+    "basalt": "pebble_time",
+    "chalk": "pebble_time_round_schwarz",
+    "diorite": "pebble_2_aqua",
+    "flint": "pebble_2_duo_schwarz",
+    "gabbro": "pebble_round_2_mattschwarz",
+}
 ICON = os.path.join(ROOT, "store", "icon", "icon_144_alpha.png")
 
 W, H, SS = 720, 320, 3
@@ -76,11 +86,18 @@ def prepare_logo():
     return logo.resize((LOGO_WIDTH, h), Image.LANCZOS)
 
 
-def watch(shot, height):
-    out = os.path.join(os.environ.get("TMPDIR", "/tmp"), "fma_uhr_%d.png" % height)
-    subprocess.run([sys.executable, UHR_BILD, "--shot", shot, "--uhr", "pebble_time_2",
-                    "--hoehe", str(height), "--out", out], check=True, capture_output=True)
-    return Image.open(out).convert("RGBA")
+def watch(shot, name, height, max_width=270):
+    """Watch with the screenshot in its display; round and wide watches get
+    smaller so they do not run into the text."""
+    out = os.path.join(os.environ.get("TMPDIR", "/tmp"), "fma_uhr_%s.png" % name)
+    for _ in range(2):
+        subprocess.run([sys.executable, UHR_BILD, "--shot", shot, "--uhr", name,
+                        "--hoehe", str(height), "--out", out], check=True, capture_output=True)
+        img = Image.open(out).convert("RGBA")
+        if img.width <= max_width:
+            return img
+        height = int(height * max_width / img.width)
+    return img
 
 
 def ground():
@@ -146,16 +163,22 @@ def text_block(img, logo):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--shot", default=SHOT, help="emery screenshot for the display")
-    p.add_argument("--out", default=os.path.join(ROOT, "store", "icon", "banner_720x320.png"))
+    p.add_argument("--platform", choices=sorted(WATCHES), action="append",
+                   help="only these platforms (default: all)")
     a = p.parse_args()
-    img = ground()
-    waves(img, WATCH_X, WATCH_Y)
-    glow(img, WATCH_X, H // 2, 120, 150)
-    place_watch(img, watch(a.shot, 360), WATCH_X, WATCH_Y, tilt=9)
-    size, lsize = text_block(img, prepare_logo())
-    img.convert("RGB").save(a.out)
-    print(a.out, "title %d pt, lines %d pt" % (size, lsize))
+    logo = prepare_logo()
+    for platform in a.platform or sorted(WATCHES):
+        shot = os.path.join(ROOT, "store", "screenshots_" + platform, "1_very_close.png")
+        img = ground()
+        waves(img, WATCH_X, WATCH_Y)
+        glow(img, WATCH_X, H // 2, 120, 150)
+        place_watch(img, watch(shot, WATCHES[platform], 360), WATCH_X, WATCH_Y, tilt=9)
+        size, lsize = text_block(img, logo)
+        out = os.path.join(ROOT, "store", "icon", "banner_720x320_%s.png" % platform)
+        img.convert("RGB").save(out)
+        if platform == "emery":
+            img.convert("RGB").save(os.path.join(ROOT, "store", "icon", "banner_720x320.png"))
+        print(out, "title %d pt, lines %d pt" % (size, lsize))
 
 
 if __name__ == "__main__":
